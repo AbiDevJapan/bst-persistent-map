@@ -1,0 +1,322 @@
+# ============================================================
+# BST-ID Research Project
+# ============================================================
+
+
+# ------------------------------------------------------------
+# Python
+# ------------------------------------------------------------
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+*.so
+*.pyd
+
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+.ipynb_checkpoints/
+
+
+# ------------------------------------------------------------
+# Python virtual environments
+# ------------------------------------------------------------
+
+.venv/
+venv/
+env/
+ENV/
+
+.python-version
+
+
+# ------------------------------------------------------------
+# C / C++
+# ------------------------------------------------------------
+
+*.o
+*.obj
+*.lo
+*.la
+
+*.a
+*.lib
+
+*.dll
+*.dylib
+*.so
+*.so.*
+
+*.exe
+*.out
+*.app
+
+CMakeCache.txt
+CMakeFiles/
+cmake-build-*/
+Makefile
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+
+
+# ------------------------------------------------------------
+# ROS / ROS2
+# ------------------------------------------------------------
+
+build/
+install/
+log/
+
+devel/
+logs/
+
+.ros/
+
+*.bag
+*.bag.active
+*.db3
+*.mcap
+
+
+# ------------------------------------------------------------
+# IDE / Editors
+# ------------------------------------------------------------
+
+.vscode/
+.idea/
+
+*.swp
+*.swo
+*~
+.DS_Store
+
+.project
+.cproject
+.settings/
+
+
+# ------------------------------------------------------------
+# Datasets
+# ------------------------------------------------------------
+
+data/
+dataset/
+datasets/
+
+nuscenes/
+nuScenes/
+v1.0-mini/
+v1.0-trainval/
+v1.0-test/
+
+samples/
+sweeps/
+maps/
+
+# Other common autonomous-driving datasets
+kitti/
+KITTI/
+waymo/
+av2/
+argoverse/
+mulran/
+
+
+# ------------------------------------------------------------
+# Large sensor files
+# ------------------------------------------------------------
+
+*.pcd
+*.ply
+*.las
+*.laz
+*.bin
+
+*.bag
+*.db3
+*.mcap
+
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+
+# ------------------------------------------------------------
+# ML models / checkpoints
+# ------------------------------------------------------------
+
+checkpoints/
+weights/
+models/
+
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.engine
+*.tflite
+
+
+# ------------------------------------------------------------
+# Experiment outputs
+# ------------------------------------------------------------
+
+results/
+outputs/
+output/
+experiments/
+runs/
+
+logs/
+log/
+
+cache/
+.cache/
+
+tmp/
+temp/
+
+profiling/
+benchmarks/output/
+
+
+# ------------------------------------------------------------
+# Generated maps / SLAM outputs
+# ------------------------------------------------------------
+
+maps/generated/
+map_outputs/
+
+trajectories/
+estimated_trajectories/
+
+*.tum
+*.kitti
+*.evo.zip
+
+
+# ------------------------------------------------------------
+# Evaluation outputs
+# ------------------------------------------------------------
+
+evaluation/
+eval_results/
+metrics/
+
+plots/
+figures/
+
+*.prof
+*.trace
+*.jsonl
+
+
+# ------------------------------------------------------------
+# TensorBoard / WandB / MLFlow
+# ------------------------------------------------------------
+
+runs/
+wandb/
+mlruns/
+lightning_logs/
+
+
+# ------------------------------------------------------------
+# Configuration overrides / local machine settings
+# ------------------------------------------------------------
+
+config/local.yaml
+config/local.yml
+config/local.json
+
+configs/local.yaml
+configs/local.yml
+configs/local.json
+
+.env
+.env.*
+!.env.example
+
+
+# ------------------------------------------------------------
+# Secrets / API keys
+# ------------------------------------------------------------
+
+*.pem
+*.key
+credentials.json
+secrets.json
+
+
+# ------------------------------------------------------------
+# Downloaded third-party dependencies
+# ------------------------------------------------------------
+
+third_party/*/build/
+third_party/*/install/
+
+external/*/build/
+
+
+# ------------------------------------------------------------
+# Generated documentation
+# ------------------------------------------------------------
+
+docs/_build/
+site/
+
+
+# ------------------------------------------------------------
+# Archives
+# ------------------------------------------------------------
+
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+
+
+# ------------------------------------------------------------
+# OS files
+# ------------------------------------------------------------
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+
+# ------------------------------------------------------------
+# Keep useful placeholder files
+# ------------------------------------------------------------
+
+!.gitkeep
