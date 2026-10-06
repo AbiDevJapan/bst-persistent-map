@@ -1,0 +1,104 @@
+# BST-ID Lifelong Mapping — Step 2
+
+Deterministic synthetic benchmark for testing the BST-ID lifelong-map idea.
+
+This project intentionally contains **no BST-ID map representation yet**.
+It creates the canonical ground truth that Step 3 will feed into:
+
+1. snapshot-per-session storage,
+2. Octree + temporal history,
+3. BST-ID spatiotemporal storage.
+
+## Default benchmark
+
+- 100 m × 100 m × 5 m
+- 0.5 m voxels
+- 100 sessions
+- coherent object-level changes
+- fixed seed (`42`)
+- static, slow, medium, and highly dynamic objects
+
+Default per-session change probabilities:
+
+| zone | probability |
+|---|---:|
+| static | 0.00 |
+| slow | 0.03 |
+| medium | 0.15 |
+| high | 0.75 |
+
+## Setup
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+## Run
+
+```bash
+python run_demo.py
+```
+
+Generate 500 sessions:
+
+```bash
+python run_demo.py --sessions 500
+```
+
+Persist the canonical history:
+
+```bash
+python run_demo.py --sessions 100 --save generated/step2_100
+```
+
+## Tests
+
+```bash
+pytest -q
+```
+
+The key invariant is checked for every transition:
+
+\[
+M_t = (M_{t-1} - \Delta_t^-) \cup \Delta_t^+
+\]
+
+## Query API
+
+```python
+snapshot(dataset, t)
+
+region_at_time(
+    dataset,
+    region=(xmin, xmax, ymin, ymax, zmin, zmax),
+    t=t,
+)
+
+changes_between(dataset, region, t_a, t_b)
+
+change_frequency_map(dataset)
+```
+
+`changes_between` is the **net state difference** between the two endpoint
+sessions, matching the Step-1 experiment contract.
+
+## Why object-level changes?
+
+The benchmark moves or toggles cuboid objects rather than independently
+flipping random voxels. A moving car therefore creates a coherent removal at
+its old location and addition at its new location, which better resembles a
+lifelong mapping problem.
+
+## Step-2 completion criterion
+
+The benchmark must answer exactly:
+
+- what was occupied at session `t`,
+- what was occupied inside a chosen region at `t`,
+- what was added/removed between two sessions,
+- which voxels changed most frequently,
+- and reconstruct every session perfectly from its predecessor plus delta.
+
+Once these hold, Step 3 can implement the three competing representations.
