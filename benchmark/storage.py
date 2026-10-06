@@ -3,6 +3,7 @@ import math
 from representations import (
     SnapshotMap, OctreeTemporalMap, BSTTemporalMapPrototype,
     BSTIntervalMapPrototype, BSTAdaptiveIntervalMapPrototype,
+    OctreeIntervalMap, OctreeSharedSignatureMap,
 )
 
 
@@ -66,9 +67,37 @@ def bst_adaptive_bytes(rep: BSTAdaptiveIntervalMapPrototype) -> int:
     return 24+per_blocks+directory+_temporal_signature_bytes(rep)
 
 
+
+def _temporal_token_bytes(tokens) -> int:
+    return sum(1 + math.ceil(depth/8) for depth,_ in tokens)
+
+
+def _octree_interval_node_bytes(node) -> int:
+    total=9
+    if node.is_leaf:
+        return total + 2 + _temporal_token_bytes(node.tokens)
+    return total + sum(_octree_interval_node_bytes(node.children[i]) for i in sorted(node.children))
+
+
+def octree_interval_bytes(rep: OctreeIntervalMap) -> int:
+    return 8 + _octree_interval_node_bytes(rep.root)
+
+
+def _octree_shared_node_bytes(node) -> int:
+    total=9
+    if node.is_leaf:
+        return total + 4  # uint32 signature id
+    return total + sum(_octree_shared_node_bytes(node.children[i]) for i in sorted(node.children))
+
+
+def octree_shared_bytes(rep: OctreeSharedSignatureMap) -> int:
+    return 12 + _octree_shared_node_bytes(rep.root) + _temporal_signature_bytes(rep)
+
 def compact_storage_bytes(rep) -> int:
     if isinstance(rep,SnapshotMap): return snapshot_compact_bytes(rep)
     if isinstance(rep,OctreeTemporalMap): return octree_compact_bytes(rep)
+    if isinstance(rep,OctreeIntervalMap): return octree_interval_bytes(rep)
+    if isinstance(rep,OctreeSharedSignatureMap): return octree_shared_bytes(rep)
     if isinstance(rep,BSTTemporalMapPrototype): return bst_event_bytes(rep)
     if isinstance(rep,BSTIntervalMapPrototype): return bst_interval_bytes(rep)
     if isinstance(rep,BSTAdaptiveIntervalMapPrototype): return bst_adaptive_bytes(rep)

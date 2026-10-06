@@ -107,3 +107,11 @@ Once these hold, Step 3 can implement the three competing representations.
 ## Step 5
 
 See `README_STEP5.md`. Run `python run_step5.py --sessions 10,25,50,100`.
+
+## Step 6
+
+See `README_STEP6.md` for strengthened Octree baselines and adversarial sweeps.
+
+```bash
+python run_step6.py --suite quick --sessions 100 --queries 4
+```
