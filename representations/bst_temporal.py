@@ -58,6 +58,11 @@ class BSTTemporalMapPrototype:
             "buckets_selected": 0,
             "events_scanned": 0,
         }
+        self.last_change_stats = {
+            "buckets_examined": 0,
+            "buckets_selected": 0,
+            "events_scanned": 0,
+        }
 
     @classmethod
     def from_dataset(
@@ -168,7 +173,13 @@ class BSTTemporalMapPrototype:
         if t_b < t_a:
             t_a, t_b = t_b, t_a
         a = self.region_at_time(region, t_a)
+        sa = dict(self.last_query_stats)
         b = self.region_at_time(region, t_b)
+        sb = dict(self.last_query_stats)
+        self.last_change_stats = {
+            k: sa.get(k, 0) + sb.get(k, 0)
+            for k in set(sa) | set(sb)
+        }
         return frozenset(b - a), frozenset(a - b)
 
     def stats(self) -> dict:

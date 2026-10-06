@@ -53,6 +53,8 @@ class OctreeTemporalMap:
         self.leaf_count = 0
         self.history_entries = 0
         self.last_query_nodes_visited = 0
+        self.last_query_stats = {"nodes_visited": 0}
+        self.last_change_stats = {"nodes_visited": 0}
 
     @classmethod
     def from_dataset(cls, dataset: GeneratedDataset) -> "OctreeTemporalMap":
@@ -162,8 +164,11 @@ class OctreeTemporalMap:
     def region_at_time(self, region: MetricBox, t: int) -> frozenset[Voxel]:
         bounds = metric_box_to_voxel_bounds(self.dataset, region)
         self.last_query_nodes_visited = 0
+        self.last_query_stats = {"nodes_visited": 0}
+        self.last_change_stats = {"nodes_visited": 0}
         out: set[Voxel] = set()
         self._query_node(self.root, bounds, t, out)
+        self.last_query_stats = {"nodes_visited": self.last_query_nodes_visited}
         return frozenset(out)
 
     def snapshot(self, t: int) -> frozenset[Voxel]:
@@ -182,7 +187,10 @@ class OctreeTemporalMap:
         if t_b < t_a:
             t_a, t_b = t_b, t_a
         a = self.region_at_time(region, t_a)
+        va = self.last_query_stats["nodes_visited"]
         b = self.region_at_time(region, t_b)
+        vb = self.last_query_stats["nodes_visited"]
+        self.last_change_stats = {"nodes_visited": va + vb}
         return frozenset(b - a), frozenset(a - b)
 
     def stats(self) -> dict:

@@ -102,3 +102,8 @@ The benchmark must answer exactly:
 - and reconstruct every session perfectly from its predecessor plus delta.
 
 Once these hold, Step 3 can implement the three competing representations.
+
+
+## Step 5
+
+See `README_STEP5.md`. Run `python run_step5.py --sessions 10,25,50,100`.

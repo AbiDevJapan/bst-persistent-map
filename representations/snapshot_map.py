@@ -15,6 +15,8 @@ class SnapshotMap:
     def __init__(self, dataset: GeneratedDataset):
         self.dataset = dataset
         self._sessions: dict[int, frozenset[Voxel]] = {}
+        self.last_query_stats = {"records_scanned": 0}
+        self.last_change_stats = {"records_scanned": 0}
 
     @classmethod
     def from_dataset(cls, dataset: GeneratedDataset) -> "SnapshotMap":
@@ -31,7 +33,9 @@ class SnapshotMap:
 
     def region_at_time(self, region: MetricBox, t: int) -> frozenset[Voxel]:
         bounds = metric_box_to_voxel_bounds(self.dataset, region)
-        return frozenset(v for v in self._sessions[t] if voxel_in_bounds(v, bounds))
+        records = self._sessions[t]
+        self.last_query_stats = {"records_scanned": len(records)}
+        return frozenset(v for v in records if voxel_in_bounds(v, bounds))
 
     def changes(
         self,
@@ -42,7 +46,10 @@ class SnapshotMap:
         if t_b < t_a:
             t_a, t_b = t_b, t_a
         a = self.region_at_time(region, t_a)
+        sa = self.last_query_stats["records_scanned"]
         b = self.region_at_time(region, t_b)
+        sb = self.last_query_stats["records_scanned"]
+        self.last_change_stats = {"records_scanned": sa + sb}
         return frozenset(b - a), frozenset(a - b)
 
     def stats(self) -> dict:
