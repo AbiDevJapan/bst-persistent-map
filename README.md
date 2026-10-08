@@ -133,3 +133,9 @@ For million-voxel real NCLT runs, use `run_step8_1.py` and see `README_STEP8_1.m
 ## Step 8.2
 
 See `README_STEP8_2.md` for the sparse-Octree baseline hardening experiment.
+
+## Step 8.3
+
+See `README_STEP8_3.md` for the N=2/3/5 real-session scaling experiment, DeltaVersion and packed voxel-history baselines, native-vs-decompressed query modes, and the isolated BST codec architecture.
+
+See `BST_CODEC_INTEGRATION.md` for the future verified BST-ID replacement boundary.
