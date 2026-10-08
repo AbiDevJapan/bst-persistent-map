@@ -139,3 +139,12 @@ See `README_STEP8_2.md` for the sparse-Octree baseline hardening experiment.
 See `README_STEP8_3.md` for the N=2/3/5 real-session scaling experiment, DeltaVersion and packed voxel-history baselines, native-vs-decompressed query modes, and the isolated BST codec architecture.
 
 See `BST_CODEC_INTEGRATION.md` for the future verified BST-ID replacement boundary.
+
+## Step 8.4
+
+See `README_STEP8_4.md` for the time-local adaptive tiling optimization. It uses the same five cached NCLT sessions as Step 8.3 and adds `time_local_explicit` plus `bst_time_local` without changing the isolated BST codec boundary.
+
+
+## Step 8.5
+
+See `README_STEP8_5.md` for the counted time-aware `(spatial bucket, session)` index over the exact Step-8.4 time-local block table. It keeps the union-index methods in the same run so index speed versus storage is isolated directly.
