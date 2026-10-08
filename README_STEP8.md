@@ -17,7 +17,7 @@ The slower Step-7 `bst_prefix_index` is intentionally not part of the main real-
 ## NCLT assumptions used
 
 - Use `velodyne_sync/UTIME.bin`, not raw `velodyne_hits.bin`.
-- Each synchronized./downloader.py --date="2012-01-08" file is one motion-compensated revolution recorded in the
+- Each synchronized file is one motion-compensated revolution recorded in the
   Segway body frame.
 - Match each scan timestamp to the provided NCLT ground-truth pose.
 - Transform body-frame scan points into the native NCLT local frame.
