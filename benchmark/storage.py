@@ -4,6 +4,7 @@ from representations import (
     SnapshotMap, OctreeTemporalMap, BSTTemporalMapPrototype,
     BSTIntervalMapPrototype, BSTAdaptiveIntervalMapPrototype,
     OctreeIntervalMap, OctreeSharedSignatureMap,
+    AdaptiveBlockExplicitMap, BSTPrefixIndexedAdaptiveMapPrototype,
 )
 
 
@@ -93,6 +94,58 @@ def _octree_shared_node_bytes(node) -> int:
 def octree_shared_bytes(rep: OctreeSharedSignatureMap) -> int:
     return 12 + _octree_shared_node_bytes(rep.root) + _temporal_signature_bytes(rep)
 
+
+def adaptive_explicit_bytes(rep: AdaptiveBlockExplicitMap) -> int:
+    """
+    Ordinary-ID identical-block baseline.
+
+    Block record:
+      uint16 x0,y0,z0,sx,sy,sz = 12 bytes
+      uint32 signature_id       = 4 bytes
+      total                     = 16 bytes
+
+    Same coarse bucket directory as bst_adaptive.
+    """
+    header=24
+    records=16*len(rep.blocks)
+    directory=12*len(rep._buckets)+4*rep.bucket_references
+    return header+records+directory+_temporal_signature_bytes(rep)
+
+
+def _axis_prefix_index_bytes(axis_index) -> int:
+    """
+    Logical compact postings layout:
+      uint16 depth_group_count
+      per depth: uint8 depth + uint32 prefix_count
+      per prefix: packed prefix + uint32 posting_count + uint32 block_ids[]
+    """
+    total=2
+    for depth, mp in axis_index.postings.items():
+        total += 1 + 4
+        pbytes=math.ceil(depth/8)
+        for prefix, ids in mp.items():
+            total += pbytes + 4 + 4*len(ids)
+    return total
+
+
+def bst_prefix_index_bytes(rep: BSTPrefixIndexedAdaptiveMapPrototype) -> int:
+    # Same compact prefix-coded blocks/signatures as bst_adaptive, but with
+    # 3 independent hierarchical prefix-posting indexes instead of buckets.
+    s=rep.dataset.spec
+    block_bytes=0
+    for b in rep.blocks:
+        block_bytes += (
+            _spatial_prefix_dim_bytes(s.nx,b.sx)+
+            _spatial_prefix_dim_bytes(s.ny,b.sy)+
+            _spatial_prefix_dim_bytes(s.nz,b.sz)+4
+        )
+    index_bytes=(
+        _axis_prefix_index_bytes(rep.xindex)+
+        _axis_prefix_index_bytes(rep.yindex)+
+        _axis_prefix_index_bytes(rep.zindex)
+    )
+    return 24+block_bytes+index_bytes+_temporal_signature_bytes(rep)
+
 def compact_storage_bytes(rep) -> int:
     if isinstance(rep,SnapshotMap): return snapshot_compact_bytes(rep)
     if isinstance(rep,OctreeTemporalMap): return octree_compact_bytes(rep)
@@ -101,4 +154,6 @@ def compact_storage_bytes(rep) -> int:
     if isinstance(rep,BSTTemporalMapPrototype): return bst_event_bytes(rep)
     if isinstance(rep,BSTIntervalMapPrototype): return bst_interval_bytes(rep)
     if isinstance(rep,BSTAdaptiveIntervalMapPrototype): return bst_adaptive_bytes(rep)
+    if isinstance(rep,AdaptiveBlockExplicitMap): return adaptive_explicit_bytes(rep)
+    if isinstance(rep,BSTPrefixIndexedAdaptiveMapPrototype): return bst_prefix_index_bytes(rep)
     raise TypeError(type(rep))

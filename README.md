@@ -115,3 +115,13 @@ See `README_STEP6.md` for strengthened Octree baselines and adversarial sweeps.
 ```bash
 python run_step6.py --suite quick --sessions 100 --queries 4
 ```
+
+
+## Step 7
+
+See `README_STEP7.md` for the BST-specific isolation experiment.
+
+
+## Step 8
+
+See `README_STEP8.md` for NCLT real-data ingestion and benchmarking.
