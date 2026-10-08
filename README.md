@@ -129,3 +129,7 @@ See `README_STEP8.md` for NCLT real-data ingestion and benchmarking.
 ## Step 8.1
 
 For million-voxel real NCLT runs, use `run_step8_1.py` and see `README_STEP8_1.md`. This replaces the object-heavy Step-8 benchmark path while retaining Step 8 for regression/reference.
+
+## Step 8.2
+
+See `README_STEP8_2.md` for the sparse-Octree baseline hardening experiment.

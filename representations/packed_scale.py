@@ -117,7 +117,7 @@ def _morton_encode(x,y,z,depth):
     return out
 
 
-def _octree_cover(bounds,root_size,depth):
+def _octree_cover_geometric(bounds,root_size,depth):
     x0,x1,y0,y1,z0,z1=bounds
     out=[]; visited=0
     stack=[(0,0,0,root_size,0,0)]
@@ -141,8 +141,22 @@ def _octree_cover(bounds,root_size,depth):
 
 
 class PackedOctreeShared:
-    """Sparse Octree semantics, flat Morton-prefix implementation for scale."""
-    def __init__(self,prepared,union_codes,masks):
+    """
+    Sparse Octree semantics with a flat Morton leaf store.
+
+    Step 8.2 hardens runtime traversal: the default ``query_mode="sparse"``
+    carries each existing node's Morton leaf slice down the tree and only
+    descends into octants that actually contain stored leaves.  The legacy
+    Step-8.1 geometric cover remains available as ``query_mode="geometric"``
+    for regression/ablation tests.
+
+    No persistent auxiliary query index is added, so logical storage accounting
+    is exactly the same as Step 8.1.
+    """
+    def __init__(self,prepared,union_codes,masks,query_mode="sparse"):
+        if query_mode not in ("sparse","geometric"):
+            raise ValueError("query_mode must be 'sparse' or 'geometric'")
+        self.query_mode=query_mode
         self.prepared=prepared; self.spec=prepared.spec; self.n_sessions=len(prepared.session_codes)
         self.depth,self.root_size=_root_depth(self.spec)
         x,y,z=linear_decode(union_codes,self.spec)
@@ -163,33 +177,90 @@ class PackedOctreeShared:
             total += 1 + int(np.count_nonzero(p[1:]!=p[:-1]))
         return total
 
-    def _candidate_slices(self,bounds):
-        cover,visited=_octree_cover(bounds,self.root_size,self.depth)
+    def _candidate_slices_geometric(self,bounds):
+        """Step-8.1 reference path: geometric cover before sparse lookup."""
+        cover,visited=_octree_cover_geometric(bounds,self.root_size,self.depth)
         slices=[]; candidates=0
         for d,prefix in cover:
             shift=3*(self.depth-d)
             lo=np.uint64(prefix)<<np.uint64(shift)
             hi=np.uint64(prefix+1)<<np.uint64(shift)
             a=int(np.searchsorted(self.morton,lo,"left")); b=int(np.searchsorted(self.morton,hi,"left"))
-            if b>a: slices.append((a,b)); candidates += b-a
-        return slices,visited,candidates,len(cover)
+            if b>a:
+                slices.append((a,b)); candidates += b-a
+        return slices,visited,candidates,len(slices),0
+
+    def _candidate_slices_sparse(self,bounds):
+        """
+        Traverse only nodes that exist in the sparse Octree.
+
+        Each stack item carries the contiguous Morton leaf slice [a,b) below
+        that node.  When a partially intersected node is split, seven Morton
+        boundary searches partition that existing slice into its non-empty
+        children. Empty octants are never pushed and therefore never traversed.
+
+        Returns:
+          slices, existing_nodes_visited, candidate_leaves, prefix_ranges,
+          empty_children_skipped
+        """
+        if not len(self.morton):
+            return [],0,0,0,0
+        x0,x1,y0,y1,z0,z1=bounds
+        slices=[]; visited=0; candidates=0; skipped=0
+        stack=[(0,0,0,self.root_size,0,0,0,len(self.morton))]
+        while stack:
+            nx,ny,nz,size,d,prefix,a,b=stack.pop()
+            if b<=a:
+                continue
+            visited += 1
+            ex=nx+size-1; ey=ny+size-1; ez=nz+size-1
+            if ex<x0 or nx>x1 or ey<y0 or ny>y1 or ez<z0 or nz>z1:
+                continue
+            if (x0<=nx and ex<=x1 and y0<=ny and ey<=y1 and z0<=nz and ez<=z1) or size==1:
+                slices.append((a,b)); candidates += b-a
+                continue
+
+            h=size//2; nd=d+1; base=prefix<<3
+            shift=3*(self.depth-nd)
+            # Children of a Morton prefix are contiguous. One vectorized
+            # search partitions the parent leaf slice into octants 0..7.
+            thresholds=(np.arange(1,8,dtype=np.uint64)+np.uint64(base)) << np.uint64(shift)
+            cuts=np.searchsorted(self.morton,thresholds,side="left")
+            bounds_idx=[a,*map(int,cuts),b]
+            # Reverse push preserves ascending-octant processing on the stack.
+            for octant in range(7,-1,-1):
+                ca= bounds_idx[octant]; cb=bounds_idx[octant+1]
+                if cb<=ca:
+                    skipped += 1
+                    continue
+                xb=octant&1; yb=(octant>>1)&1; zb=(octant>>2)&1
+                stack.append((
+                    nx+xb*h, ny+yb*h, nz+zb*h, h, nd,
+                    base+octant, ca, cb
+                ))
+        return slices,visited,candidates,len(slices),skipped
+
+    def _candidate_slices(self,bounds):
+        if self.query_mode=="geometric":
+            return self._candidate_slices_geometric(bounds)
+        return self._candidate_slices_sparse(bounds)
 
     def region_codes(self,region,t):
         bounds=metric_box_to_bounds(self.spec,region)
-        slices,visited,candidates,nranges=self._candidate_slices(bounds)
+        slices,visited,candidates,nranges,skipped=self._candidate_slices(bounds)
         parts=[]
         bit=np.uint64(1)<<np.uint64(t)
         for a,b in slices:
             keep=(self.masks[a:b]&bit)!=0
             if np.any(keep): parts.append(self.linear[a:b][keep])
         out=np.sort(np.concatenate(parts)) if parts else np.empty(0,dtype=np.uint64)
-        self.last_query_stats={"nodes_visited":visited,"prefix_ranges":nranges,"candidate_leaves":candidates,"result_voxels":len(out)}
+        self.last_query_stats={"nodes_visited":visited,"prefix_ranges":nranges,"candidate_leaves":candidates,"empty_children_skipped":skipped,"result_voxels":len(out),"octree_query_mode":self.query_mode}
         return out
 
     def changes_codes(self,region,ta,tb):
         if tb<ta: ta,tb=tb,ta
         bounds=metric_box_to_bounds(self.spec,region)
-        slices,visited,candidates,nranges=self._candidate_slices(bounds)
+        slices,visited,candidates,nranges,skipped=self._candidate_slices(bounds)
         add=[]; rem=[]; ba=np.uint64(1)<<np.uint64(ta); bb=np.uint64(1)<<np.uint64(tb)
         for a,b in slices:
             m=self.masks[a:b]; A=(m&ba)!=0; B=(m&bb)!=0
@@ -198,7 +269,7 @@ class PackedOctreeShared:
             if np.any(kr): rem.append(self.linear[a:b][kr])
         added=np.sort(np.concatenate(add)) if add else np.empty(0,dtype=np.uint64)
         removed=np.sort(np.concatenate(rem)) if rem else np.empty(0,dtype=np.uint64)
-        self.last_change_stats={"nodes_visited":visited,"prefix_ranges":nranges,"candidate_leaves":candidates,"result_voxels":len(added)+len(removed)}
+        self.last_change_stats={"nodes_visited":visited,"prefix_ranges":nranges,"candidate_leaves":candidates,"empty_children_skipped":skipped,"result_voxels":len(added)+len(removed),"octree_query_mode":self.query_mode}
         return added,removed
 
     def compact_bytes(self):
@@ -206,7 +277,7 @@ class PackedOctreeShared:
         return 12 + 9*self.node_count + 4*self.leaf_count + self.sig_bytes
 
     def stats(self):
-        return {"nodes":self.node_count,"leaves":self.leaf_count,"unique_temporal_signatures":len(self.unique_masks),"temporal_prefixes":self.temporal_prefixes,"octree_depth":self.depth}
+        return {"nodes":self.node_count,"leaves":self.leaf_count,"unique_temporal_signatures":len(self.unique_masks),"temporal_prefixes":self.temporal_prefixes,"octree_depth":self.depth,"query_mode":self.query_mode}
 
 
 # ---------- Vectorized exact adaptive dyadic blocks ----------
