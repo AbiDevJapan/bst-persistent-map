@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+from argparse import ArgumentParser
+from pathlib import Path
+
+from benchmark.step931_benchmark import (
+    benchmark_step931, UNWEIGHTED, PERSISTENT, HISTORY_ROBUST,
+)
+from localization.step901 import PointToPlaneICP3DOFConfig
+
+DEFAULT_HISTORY='2012-01-15,2012-02-02,2012-03-17,2012-05-11,2012-06-15'
+DEFAULT_QUERIES='2012-02-02,2012-03-17,2012-05-11,2012-06-15'
+
+
+def main():
+    p=ArgumentParser(description='Step 9.3.1: history-pattern-aware robust localization over frozen compact K=4 BST LOD')
+    p.add_argument('--data-root',required=True)
+    p.add_argument('--history-sessions',default=DEFAULT_HISTORY)
+    p.add_argument('--map-session',default='2012-01-15')
+    p.add_argument('--query-sessions',default=DEFAULT_QUERIES)
+    p.add_argument('--voxel-size',type=float,default=0.5)
+    p.add_argument('--scan-stride',type=int,default=10)
+    p.add_argument('--min-range',type=float,default=2.0)
+    p.add_argument('--max-range',type=float,default=80.0)
+    p.add_argument('--min-points-per-voxel',type=int,default=1)
+    p.add_argument('--max-pose-gap-us',type=int,default=100000)
+    p.add_argument('--cache-dir',default='.cache/step8_1')
+    p.add_argument('--query-count-per-session',type=int,default=50)
+    p.add_argument('--same-session-query-count',type=int,default=50)
+    p.add_argument('--exclude-query-scans-csv',action='append',default=[],help='CSV whose scan_file rows must be excluded; may be repeated. For a fresh 9.3.1 set, exclude the 9.1.2, 9.2, and 9.3 query_scans.csv files.')
+    p.add_argument('--perturbations',default='0.5:1')
+    p.add_argument('--perturb-seed',type=int,default=93190)
+    p.add_argument('--localization-max-range',type=float,default=30.0)
+    p.add_argument('--scan-downsample',type=float,default=0.75)
+    p.add_argument('--max-scan-points',type=int,default=8000)
+    p.add_argument('--local-map-radius',type=float,default=40.0)
+    p.add_argument('--map-bucket-m',type=float,default=8.0)
+    p.add_argument('--success-translation',type=float,default=0.5)
+    p.add_argument('--success-yaw-deg',type=float,default=1.0)
+    p.add_argument('--include-voxel-baseline',action='store_true')
+    p.add_argument('--no-same-session-zero',action='store_true')
+    p.add_argument('--icp-min-correspondences',type=int,default=80)
+    p.add_argument('--normal-min-neighbors',type=int,default=6)
+    p.add_argument('--normal-max-curvature',type=float,default=0.20)
+    p.add_argument('--normal-min-horizontal',type=float,default=0.20)
+    p.add_argument('--damping',type=float,default=1e-4)
+    p.add_argument('--quiet',action='store_true')
+    p.add_argument('--output',default='results/step9_3_1_history_robust')
+    a=p.parse_args()
+
+    cfg=PointToPlaneICP3DOFConfig(
+        min_correspondences=a.icp_min_correspondences,
+        normal_min_neighbors=a.normal_min_neighbors,
+        normal_max_curvature=a.normal_max_curvature,
+        normal_min_horizontal_component=a.normal_min_horizontal,
+        damping=a.damping,
+    )
+    names=[x.strip() for x in a.history_sessions.split(',') if x.strip()]
+    qs=[x.strip() for x in a.query_sessions.split(',') if x.strip()]
+    excludes=[]
+    for x in a.exclude_query_scans_csv:
+        if not Path(x).exists():
+            raise FileNotFoundError(f'exclusion CSV not found: {x}')
+        excludes.append(x)
+
+    (_,session_summary,pooled,paired_persistence,paired_history,
+     persistence_gates,history_gates,memory,pstats,hstats,null)=benchmark_step931(
+        data_root=a.data_root,output_dir=Path(a.output),history_sessions=names,map_session=a.map_session,query_sessions=qs,
+        voxel_size_m=a.voxel_size,scan_stride=a.scan_stride,min_range_m=a.min_range,max_range_m=a.max_range,
+        min_points_per_voxel=a.min_points_per_voxel,max_pose_gap_us=a.max_pose_gap_us,cache_dir=a.cache_dir,
+        query_count_per_session=a.query_count_per_session,same_session_query_count=a.same_session_query_count,
+        exclude_query_scans_csv=excludes,perturbations=a.perturbations,perturb_seed=a.perturb_seed,
+        localization_max_range_m=a.localization_max_range,scan_downsample_m=a.scan_downsample,max_scan_points=a.max_scan_points,
+        local_map_radius_m=a.local_map_radius,bucket_width_m=a.map_bucket_m,success_translation_m=a.success_translation,
+        success_yaw_deg=a.success_yaw_deg,icp_config=cfg,include_same_session_zero=not a.no_same_session_zero,
+        include_voxel_baseline=a.include_voxel_baseline,progress=not a.quiet,
+    )
+
+    print('\nStep 9.3.1 causal history-pattern statistics',flush=True)
+    for r in hstats:
+        s=names[int(r['query_session_index'])]
+        print(f"  {s}: prior={int(r['prior_session_count'])} transitions={int(r['transition_intervals'])} mean-instability={r['mean_instability']:.3f} stable={100*r['fraction_stable_zero_transition']:.1f}% high>=0.5={100*r['fraction_high_instability_ge_half']:.1f}%",flush=True)
+
+    print('\nStep 9.3.1 per-session main comparison',flush=True)
+    for s in qs:
+        for geom in (UNWEIGHTED,PERSISTENT,HISTORY_ROBUST):
+            rr=next(r for r in session_summary if r['scenario']=='cross_session' and r['query_session']==s and r['perturbation']=='xy0.5_yaw1' and r['map_geometry']==geom)
+            print(f"  {a.map_session}->{s} {geom:28s}: success={100*rr['success_rate']:.1f}% med={rr['median_final_translation_error_m']:.3f}m/{rr['median_final_yaw_error_deg']:.2f}deg total={rr['median_total_ms']:.1f}ms",flush=True)
+
+    print('\nStep 9.3.1 causal null control',flush=True)
+    print(f"  first query session three-way exact equivalence={null['passed']} max-float-diff={null['max_abs_float_difference']}",flush=True)
+    if history_gates:
+        g=history_gates[0]
+        print('\nStep 9.3.1 later-session history-robust gate',flush=True)
+        print(f"  success: unweighted={100*g['unweighted_success_rate']:.1f}% linear-persistence={100*g['linear_persistence_success_rate']:.1f}% history-robust={100*g['history_robust_success_rate']:.1f}%",flush=True)
+        print(f"  history/unweighted ratio={100*g['success_ratio_history_to_unweighted']:.1f}% paired net history wins={g['net_history_robust_success_difference']} exact-p={g['exact_mcnemar_p']:.3f}",flush=True)
+        print(f"  runtime ratio={g['median_total_time_ratio_history_to_unweighted']:.3f} primitive ratio={g['primitive_ratio_history_to_unweighted']:.3f}",flush=True)
+        print(f"  safety gate={g['safety_gate_pass']} temporal gain gate={g['temporal_gain_gate_pass']} beats linear persistence={g['beats_linear_persistence_success']}",flush=True)
+
+    print('\nStep 9.3.1 deployed memory',flush=True)
+    for r in memory:
+        print(f"  {r['map_geometry']:28s}: {r['deployed_runtime_total_mib']:.1f} MiB",flush=True)
+    print(f'Wrote Step 9.3.1 results to {a.output}',flush=True)
+
+
+if __name__=='__main__':
+    main()
