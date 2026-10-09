@@ -83,6 +83,16 @@ def _reduce_scan_into_stats(
 ) -> None:
     if len(local) == 0:
         return
+    # Historical NCLT ground truth contains a small number of non-finite rows
+    # in some sessions.  A non-finite transformed return must never reach the
+    # integer voxel cast or moment accumulator: one NaN can poison a voxel's
+    # covariance and later make np.linalg.eigh fail for the whole batch.
+    local = np.asarray(local, dtype=np.float64)
+    finite = np.all(np.isfinite(local), axis=1)
+    if not np.all(finite):
+        local = local[finite]
+    if len(local) == 0:
+        return
     vox = np.floor(local / float(voxel_size_m)).astype(np.int64)
     codes = pack_signed_xyz(vox[:, 0], vox[:, 1], vox[:, 2])
     pos = np.searchsorted(occupied_abs_codes, codes)
@@ -131,7 +141,11 @@ def _finalize_geometry(
     centroids = (origins + mean_off.astype(np.float64)).astype(np.float32)
 
     cov6 = np.zeros((n, 6), dtype=np.float32)
-    valid_count = counts >= int(normal_min_points)
+    # Only finalize voxels whose accumulated sufficient statistics are finite.
+    # This is a second line of defense against a corrupt scan/pose and also
+    # makes cached historical-map construction robust to legacy bad inputs.
+    finite_stats = np.all(np.isfinite(sum1), axis=1) & np.all(np.isfinite(sum2), axis=1)
+    valid_count = (counts >= int(normal_min_points)) & finite_stats
     idx = np.flatnonzero(valid_count)
     if len(idx):
         c = counts[idx].astype(np.float64)
@@ -154,15 +168,34 @@ def _finalize_geometry(
         C[:, 0, 0] = c6[:, 0]; C[:, 0, 1] = c6[:, 1]; C[:, 0, 2] = c6[:, 2]
         C[:, 1, 0] = c6[:, 1]; C[:, 1, 1] = c6[:, 3]; C[:, 1, 2] = c6[:, 4]
         C[:, 2, 0] = c6[:, 2]; C[:, 2, 1] = c6[:, 4]; C[:, 2, 2] = c6[:, 5]
-        ev, evec = np.linalg.eigh(C)
+        finite_c = np.all(np.isfinite(C), axis=(1, 2))
+        if not np.any(finite_c):
+            continue
+        jj = ii[finite_c]
+        Cf = C[finite_c]
+        try:
+            ev, evec = np.linalg.eigh(Cf)
+            solved = np.ones(len(jj), dtype=bool)
+        except np.linalg.LinAlgError:
+            # Extremely rare fallback: isolate the bad 3x3 matrix instead of
+            # aborting construction of an entire historical session map.
+            ev = np.full((len(jj), 3), np.nan, dtype=np.float64)
+            evec = np.full((len(jj), 3, 3), np.nan, dtype=np.float64)
+            solved = np.zeros(len(jj), dtype=bool)
+            for k, M in enumerate(Cf):
+                try:
+                    ek, vk = np.linalg.eigh(M)
+                except np.linalg.LinAlgError:
+                    continue
+                ev[k] = ek; evec[k] = vk; solved[k] = True
         total = np.sum(ev, axis=1)
-        curv = np.divide(np.maximum(ev[:, 0], 0.0), total, out=np.full(len(ii), np.inf), where=total > 1e-12)
+        curv = np.divide(np.maximum(ev[:, 0], 0.0), total, out=np.full(len(jj), np.inf), where=total > 1e-12)
         nn = evec[:, :, 0]
         h = np.hypot(nn[:, 0], nn[:, 1])
-        good = np.isfinite(curv) & (curv <= float(normal_max_curvature)) & (h >= float(normal_min_horizontal_component))
-        normals[ii[good]] = nn[good].astype(np.float32)
-        curvature[ii] = curv.astype(np.float32)
-        normal_valid[ii[good]] = 1
+        good = solved & np.isfinite(curv) & np.all(np.isfinite(nn), axis=1) & (curv <= float(normal_max_curvature)) & (h >= float(normal_min_horizontal_component))
+        normals[jj[good]] = nn[good].astype(np.float32)
+        curvature[jj] = curv.astype(np.float32)
+        normal_valid[jj[good]] = 1
     return centroids, cov6, normals, curvature, normal_valid
 
 
@@ -204,8 +237,13 @@ def build_nclt_surfel_map(
     pose_rows, gaps = _nearest_pose_rows(gt, ts)
     t0 = time.perf_counter()
     used = 0
+    skipped_nonfinite_pose = 0
+    dropped_nonfinite_points = 0
     for i, (scan, pose, gap) in enumerate(zip(selected, pose_rows, gaps), start=1):
         if int(gap) > int(config.max_pose_gap_us):
+            continue
+        if not np.all(np.isfinite(np.asarray(pose[1:7], dtype=np.float64))):
+            skipped_nonfinite_pose += 1
             continue
         body = read_velodyne_sync_bin(scan)
         body = _filter_body_points(body, config)
@@ -215,11 +253,21 @@ def build_nclt_surfel_map(
         R = _rot_zyx(np.array(roll), np.array(pitch), np.array(yaw))
         local = body @ R.T
         local[:, 0] += px; local[:, 1] += py; local[:, 2] += pz
+        finite_local = np.all(np.isfinite(local), axis=1)
+        if not np.all(finite_local):
+            dropped_nonfinite_points += int(np.count_nonzero(~finite_local))
+            local = local[finite_local]
         local = _apply_roi(local, config.roi_local_m)
         _reduce_scan_into_stats(local, config.voxel_size_m, abs_codes, counts, sum1, sum2)
         used += 1
         if i % int(progress_every) == 0 or i == len(selected):
             print(f"  [{session} surfel] scans {i:,}/{len(selected):,}; used={used:,}; {time.perf_counter()-t0:.1f}s", flush=True)
+
+    if skipped_nonfinite_pose or dropped_nonfinite_points:
+        print(
+            f"  [{session} surfel] non-finite guard: skipped_pose_scans={skipped_nonfinite_pose:,}; "
+            f"dropped_points={dropped_nonfinite_points:,}", flush=True,
+        )
 
     centroids, cov6, normals, curvature, normal_valid = _finalize_geometry(
         abs_codes, config.voxel_size_m, counts, sum1, sum2,

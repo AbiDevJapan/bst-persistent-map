@@ -273,12 +273,16 @@ def _session_world_voxels(
         if len(body) == 0:
             continue
 
+        if not np.all(np.isfinite(np.asarray(pose[1:7], dtype=np.float64))):
+            st.scans_skipped_pose_gap += 1
+            continue
         _, x,y,z,roll,pitch,yaw = pose
         R = _rot_zyx(np.array(roll), np.array(pitch), np.array(yaw))
         local = body @ R.T
         local[:,0] += x
         local[:,1] += y
         local[:,2] += z
+        local = local[np.all(np.isfinite(local), axis=1)]
         local = _apply_roi(local, cfg.roi_local_m)
         st.filtered_points += len(local)
         st.scans_used += 1

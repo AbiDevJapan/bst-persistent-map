@@ -215,10 +215,16 @@ def _session_absolute_codes(
         if not len(body):
             continue
 
+        if not np.all(np.isfinite(np.asarray(pose[1:7], dtype=np.float64))):
+            # Treat a non-finite GT row as unusable, just like an excessive
+            # timestamp gap.  Existing valid caches remain fully compatible.
+            st.scans_skipped_pose_gap += 1
+            continue
         _, px, py, pz, roll, pitch, yaw = pose
         R = _rot_zyx(np.array(roll), np.array(pitch), np.array(yaw))
         local = body @ R.T
         local[:, 0] += px; local[:, 1] += py; local[:, 2] += pz
+        local = local[np.all(np.isfinite(local), axis=1)]
         local = _apply_roi(local, cfg.roi_local_m)
         st.filtered_points += len(local)
         st.scans_used += 1
