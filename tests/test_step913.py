@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from types import SimpleNamespace
 
 from synthetic.world import WorldSpec
@@ -75,3 +76,10 @@ def test_count_width_is_compacted_without_value_loss():
     _,h,v=_fixture(); m=materialize_lod_view(v)
     assert m.counts.dtype==np.uint32
     assert np.array_equal(m.counts.astype(np.uint64),h.node_counts(v.selected_node_ids))
+
+
+def test_materialization_verification_rejects_nonfinite_center_cleanly():
+    bst,h,v=_fixture(); m=materialize_lod_view(v)
+    cfg=PointToPlaneICP3DOFConfig(min_correspondences=1,normal_min_neighbors=1,normal_max_curvature=1.0,normal_min_horizontal_component=0.0)
+    with pytest.raises(ValueError, match='non-finite materialization verification center'):
+        verify_materialization(v,m,bst,0,[(float('nan'),.75)],5.0,DEFAULT_PYRAMID,cfg,max_pyramid_checks=1)

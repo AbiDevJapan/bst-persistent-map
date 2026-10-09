@@ -219,8 +219,14 @@ def verify_materialization(
     pyramid_checks = 0
 
     for cx, cy in query_centers:
-        old_ids = href.query_radius_ids(float(cx), float(cy), float(radius_m))
-        new_rows = hnew.query_radius_ids(float(cx), float(cy), float(radius_m))
+        cx = float(cx); cy = float(cy)
+        if not (np.isfinite(cx) and np.isfinite(cy)):
+            raise ValueError(
+                f'non-finite materialization verification center: cx={cx!r}, cy={cy!r}; '
+                'query selection must reject non-finite ground-truth poses'
+            )
+        old_ids = href.query_radius_ids(cx, cy, float(radius_m))
+        new_rows = hnew.query_radius_ids(cx, cy, float(radius_m))
         pos = np.searchsorted(src_sorted, old_ids)
         if len(old_ids):
             if np.any(pos >= len(src_sorted)) or not np.array_equal(src_sorted[pos], old_ids):

@@ -67,6 +67,15 @@ def _read_excluded_scan_names(csv_path: str | Path | None, scenario: str = 'cros
     return out
 
 
+
+
+def _finite_pose_mask(pose_rows: np.ndarray) -> np.ndarray:
+    """True for GT rows whose x/y/z/roll/pitch/yaw fields are all finite."""
+    a = np.asarray(pose_rows, dtype=np.float64)
+    if a.ndim != 2 or a.shape[1] < 7:
+        raise ValueError('pose_rows must be Nx7 or wider')
+    return np.all(np.isfinite(a[:, 1:7]), axis=1)
+
 def _select_query_scans_excluding(
     data_root: str | Path,
     session: str,
@@ -80,7 +89,12 @@ def _select_query_scans_excluding(
     gt = load_ground_truth(paths.gt_csv)
     ts = np.asarray([_timestamp_from_scan(p) for p in scans], dtype=np.int64)
     pose_rows, gaps = _nearest_pose_rows(gt, ts)
-    valid = np.flatnonzero(gaps <= int(max_pose_gap_us))
+    # A small number of NCLT ground-truth rows can contain non-finite pose
+    # fields even though their timestamps are valid.  Timestamp-gap filtering
+    # alone therefore is not sufficient for localization query selection.
+    # Reject those rows here, before expensive map/hierarchy construction.
+    finite_pose = _finite_pose_mask(pose_rows)
+    valid = np.flatnonzero((gaps <= int(max_pose_gap_us)) & finite_pose)
     if exclude_ingest_stride is not None and int(exclude_ingest_stride) > 1:
         stride = int(exclude_ingest_stride)
         valid = valid[(valid % stride) != 0]
