@@ -1,0 +1,188 @@
+"""Generate cached BEVPlace++ global descriptors for the *exact* Step 9.5 scans.
+
+Run from the EXISTING BST-ID project root, with the official BEVPlace2 checkout
+and a compatible, trusted pretrained model checkpoint available locally.
+A locally generated non-CUDA REIN model copy supports MPS and CPU.
+This tool does not train or fine-tune the model on NCLT.
+"""
+from __future__ import annotations
+import argparse
+import csv
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import sys
+import time
+import numpy as np
+
+from realdata.nclt import (NCLTIngestConfig, discover_nclt_session, _list_scan_files,
+                           read_velodyne_sync_bin, _filter_body_points)
+
+PREPROCESS_ID = 'bevplace2_author_getBEV_voxel0.4_square80_density_nclt_body_v1'
+MODEL_ID = 'zjuluolun/BEVPlace2:REIN-NetVLAD64x128'
+
+
+def bev_image(points, o3d):
+    """Author-compatible 201x201 BEV count image, using Open3D voxel centroids.
+
+    Author scripts use 0.4m voxel_down_sample, grid [-40, 40]m inclusive,
+    axis ordering row <- x, column <- y, per-cell count clamped to 10,
+    normalized image intensity to [0,255]. No GT pose is used.
+    """
+    p = np.asarray(points, dtype=np.float64)
+    if p.ndim != 2 or p.shape[1] != 3:
+        raise ValueError('NCLT point cloud must be N x 3')
+    p = p[np.all(np.isfinite(p), axis=1)]
+    p = p[np.all(np.abs(p) < 40.0, axis=1)]
+    mat = np.zeros((201,201), dtype=np.uint8)
+    if len(p)==0: return mat
+    cloud = o3d.geometry.PointCloud()
+    cloud.points = o3d.utility.Vector3dVector(p)
+    p = np.asarray(cloud.voxel_down_sample(voxel_size=0.4).points)
+    col = 100 - np.floor(p[:, 1] / 0.4).astype(np.int64)
+    row = 100 - np.floor(p[:, 0] / 0.4).astype(np.int64)
+    inside = (row >= 0) & (row < 201) & (col >= 0) & (col < 201)
+    counts = np.zeros((201,201), dtype=np.int32)
+    np.add.at(counts, (row[inside], col[inside]), 1)
+    # Equivalent to author's saturating update (<10) and final normalization.
+    counts = np.minimum(counts, 10)
+    vmax = int(counts.max())
+    if vmax:
+        mat = np.asarray(np.rint(counts / vmax * 255), dtype=np.uint8)
+    return mat
+
+
+def _read_body(path, cfg):
+    p = _filter_body_points(read_velodyne_sync_bin(Path(path)), cfg)
+    return np.asarray(p, dtype=np.float64)
+
+
+def _sha256(path):
+    digest=hashlib.sha256()
+    with Path(path).open('rb') as f:
+        for buf in iter(lambda:f.read(1<<20), b''):
+            digest.update(buf)
+    return digest.hexdigest()
+
+
+def _model(repo, checkpoint, device):
+    import torch
+    import torchvision.models as tvmodels
+    # The model copy uses the requested device; official source remains unchanged.
+    repo = Path(repo).resolve()
+    if not (repo/'REIN.py').is_file(): raise FileNotFoundError(repo/'REIN.py')
+    # Avoid a redundant internet download of ResNet34 ImageNet weights, as the
+    # complete BEVPlace++ checkpoint replaces all network parameters anyway.
+    spec=importlib.util.spec_from_file_location('bevplace2_author_REIN_mps',Path(__file__).with_name('_bevplace_REIN_mps.py'))
+    mod=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    orig=tvmodels.resnet34
+    def no_download(*args, **kwargs):
+        kwargs.pop('pretrained', None)
+        kwargs['weights'] = None
+        return orig(*args, **kwargs)
+    try:
+        tvmodels.resnet34=no_download
+        model=mod.REIN()
+    finally:
+        tvmodels.resnet34=orig
+    try:
+        state=torch.load(str(checkpoint),map_location='cpu',weights_only=True)
+    except TypeError:
+        # Old PyTorch without weights_only parameter: only load trusted files.
+        state=torch.load(str(checkpoint),map_location='cpu')
+    state=state['state_dict'] if isinstance(state,dict) and 'state_dict' in state else state
+    model.load_state_dict(state,strict=True)
+    model=model.to(device).eval()
+    return model,torch
+
+
+def _encode_scan_files(paths, model, torch, cfg, o3d, batch_size, device):
+    desc=[]; pending=[]
+    durations=[]
+    for i, path in enumerate(paths):
+        img=bev_image(_read_body(path,cfg),o3d)
+        pending.append(np.repeat(img[None,:,:],3,axis=0).astype(np.float32)/256.0)
+        if len(pending)==batch_size or i==len(paths)-1:
+            x=torch.from_numpy(np.stack(pending)).to(device)
+            if device.type == 'mps': torch.mps.synchronize()
+            t0=time.perf_counter()
+            with torch.inference_mode():
+                _, _, vectors=model(x)
+            if device.type == 'mps': torch.mps.synchronize()
+            durations.append(1000*(time.perf_counter()-t0))
+            desc.append(vectors.detach().float().cpu().numpy())
+            pending=[]
+        if (i+1)%250==0: print(f'  Encoded {i+1}/{len(paths)} scans',flush=True)
+    if not desc: raise ValueError('No scans selected')
+    d=np.concatenate(desc,axis=0)
+    if d.shape[1] != 8192 or not np.all(np.isfinite(d)):
+        raise RuntimeError(f'Unexpected BEVPlace++ output: shape={d.shape}, finite={np.isfinite(d).all()}')
+    return d, sum(durations)
+
+
+def main():
+    p=argparse.ArgumentParser(description='Step 9.6 BEVPlace++ official REIN descriptor extraction; CUDA required')
+    p.add_argument('--data-root',required=True)
+    p.add_argument('--query-scans-csv',required=True,help='Step 9.5 query_scans.csv; scan_file/session/index fields required')
+    p.add_argument('--reference-cache-dir',default='.cache/step8_1/step9_5_scan_context')
+    p.add_argument('--bevplace-repo',required=True,help='Local git clone of authors\' zjuluolun/BEVPlace2 repo')
+    p.add_argument('--checkpoint',required=True,help='Trusted pretrained BEVPlace++ model_best.pth.tar or checkpoint.pth.tar')
+    p.add_argument('--output',default='results/step9_6_bevplace_descriptors')
+    p.add_argument('--batch-size',type=int,default=1)
+    p.add_argument('--device',choices=('auto','mps','cpu'),default='auto',help='M3: use mps; CPU for fallback/debugging')
+    a=p.parse_args()
+    if a.batch_size<1: p.error('--batch-size must be >= 1')
+    checkpoint=Path(a.checkpoint)
+    if not checkpoint.is_file(): raise FileNotFoundError(checkpoint)
+    import open3d as o3d
+    import torch
+    if a.device == 'mps' and not torch.backends.mps.is_available():
+        raise RuntimeError('MPS is unavailable: check PyTorch macOS arm64 installation')
+    chosen = 'mps' if a.device == 'auto' and torch.backends.mps.is_available() else ('cpu' if a.device == 'auto' else a.device)
+    device = torch.device(chosen)
+    print(f'[BEVPlace++] device={device}, batch_size={a.batch_size}', flush=True)
+    model,torch=_model(a.bevplace_repo,checkpoint,device)
+    sha=_sha256(checkpoint)
+    cfg=NCLTIngestConfig(voxel_size_m=0.5,scan_stride=10,min_range_m=2.0,max_range_m=80.0,max_pose_gap_us=100000)
+    with Path(a.query_scans_csv).open(newline='') as f: queries=list(csv.DictReader(f))
+    if not queries or not {'query_session','historical_map_session','scan_file','original_scan_index'}.issubset(queries[0]):
+        raise ValueError('Expected real Step 9.5 query_scans.csv')
+    out=Path(a.output);out.mkdir(parents=True,exist_ok=True)
+    prior_sessions=list(dict.fromkeys(r['historical_map_session'] for r in queries))
+    q_sessions=list(dict.fromkeys(r['query_session'] for r in queries))
+    metadata=[]
+    for kind,session in ([('reference',s) for s in prior_sessions]+[('query',s) for s in q_sessions]):
+        paths=discover_nclt_session(a.data_root,session)
+        scan_list=_list_scan_files(paths.scan_dir)
+        if kind=='reference':
+            # The exact frozen Step 9.5 keyframes and ROW ORDER must be reused.
+            filename=(f'{session}_r20_s60_R80_stride5_d5_y15_t5_v0.5.npz')
+            src=Path(a.reference_cache_dir)/filename
+            if not src.is_file(): raise FileNotFoundError(f'Frozen Step 9.5 reference cache missing: {src}')
+            with np.load(src,allow_pickle=False) as z:
+                indices=np.asarray(z['scan_indices'],dtype=np.int64)
+                pose_rows=np.asarray(z['pose_rows'],dtype=np.float64)
+            files=[scan_list[int(i)] for i in indices]
+        else:
+            query_rows=[r for r in queries if r['query_session']==session]
+            indices=np.asarray([int(r['original_scan_index']) for r in query_rows],dtype=np.int64)
+            files=[scan_list[int(i)] for i in indices]
+            if any(x.name!=r['scan_file'] for x,r in zip(files,query_rows)):
+                raise ValueError('Step 9.5 query scan filename/index mapping mismatch')
+            pose_rows=None
+        print(f'[{kind} {session}] extracting {len(files)} descriptors...',flush=True)
+        vec,network_ms=_encode_scan_files(files,model,torch,cfg,o3d,a.batch_size,device)
+        kwargs=dict(descriptors=vec,scan_files=np.asarray([x.name for x in files]),original_scan_indices=indices,
+                    model_id=np.array(MODEL_ID),checkpoint_sha256=np.array(sha),preprocess_id=np.array(PREPROCESS_ID))
+        if pose_rows is not None:kwargs['pose_rows']=pose_rows
+        path=out/f'{kind}_{session}.npz'
+        np.savez_compressed(path,**kwargs)
+        metadata.append(dict(kind=kind,session=session,scans=len(files),descriptor_dim=vec.shape[1],file=str(path),network_only_ms=network_ms))
+    (out/'extraction_metadata.json').write_text(json.dumps(dict(model_id=MODEL_ID,preprocess_id=PREPROCESS_ID,
+        checkpoint_sha256=sha,checkpoint_path=str(checkpoint),notes='Network-only timing excludes NCLT load and BEV construction. Do not use training labels or GT at query time.',
+        per_session=metadata,device=str(device),torch_version=str(torch.__version__)),indent=2))
+    print(f'Done: {out}')
+
+if __name__=='__main__': main()
