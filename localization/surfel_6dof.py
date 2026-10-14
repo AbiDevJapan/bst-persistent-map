@@ -23,10 +23,14 @@ class Surfel6DConfig:
     max_total_rotation_deg: float = 8.0
     damping: float = 1e-3
     profile: bool = False
+    nn_workers: int = 1
+    tree_leafsize: int = 16
 
 
 def align_surfel_6dof(centroids, cov6, counts, scan, initial, config=None, prepared=None, fast_tree=False):
     cfg=config or Surfel6DConfig()
+    if cfg.nn_workers == 0 or cfg.nn_workers < -1 or cfg.tree_leafsize < 1:
+        raise ValueError("nn_workers must be -1 or >=1 and tree_leafsize >=1")
     t0=time.perf_counter()
     phases={"normal_ms":0.0,"tree_ms":0.0,"correspondence_ms":0.0,"linearize_ms":0.0,"acceptance_ms":0.0}
     T0=np.asarray(initial,dtype=np.float64)
@@ -54,14 +58,14 @@ def align_surfel_6dof(centroids, cov6, counts, scan, initial, config=None, prepa
     phases["normal_ms"]+=(time.perf_counter()-tick)*1000
     if not np.isfinite(dst).all() or not np.isfinite(n).all():
         raise ValueError('Nonfinite target geometry')
-    tick=time.perf_counter(); tree=(cKDTree(dst, balanced_tree=False, compact_nodes=False)
-          if fast_tree else cKDTree(dst))
+    tick=time.perf_counter(); tree=(cKDTree(dst, balanced_tree=False, compact_nodes=False, leafsize=cfg.tree_leafsize)
+          if fast_tree else cKDTree(dst, leafsize=cfg.tree_leafsize))
     phases["tree_ms"]+=(time.perf_counter()-tick)*1000
     T=T0.copy(); prev=float('inf'); accepted=False; count=0; steps=0
     for iteration in range(cfg.iterations):
         tick=time.perf_counter()
         p=src@T[:3,:3].T+T[:3,3]
-        dist,idx=tree.query(p,k=1,workers=1)
+        dist,idx=tree.query(p,k=1,workers=cfg.nn_workers)
         mask=(dist<=cfg.correspondence_m)&valid[idx]
         count=int(mask.sum())
         phases["correspondence_ms"]+=(time.perf_counter()-tick)*1000

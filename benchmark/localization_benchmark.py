@@ -30,7 +30,7 @@ from localization.retrieval import HistoricalRetriever
 from benchmark.orientation_diagnostics import make_pose_audit
 from localization.native_surfel_registration import NativeSurfelConfig, align_native_surfels
 from localization.native_surfel_prepared import PreparedSurfelMap
-from localization.surfel_6dof import align_surfel_6dof
+from localization.surfel_6dof import align_surfel_6dof, Surfel6DConfig
 from localization.bev_local_pose import LocalFeatureStore, estimate_pose
 from localization.bev_hybrid import HybridBEVPolicy
 from localization.frontend_adaptive import EarlyExitPolicy, GeometryVerificationPolicy, verified_candidate, verify_alignment_geometry
@@ -72,7 +72,7 @@ def benchmark_localization(
     frontend_strategy="exhaustive", frontend_min_inliers=350, frontend_min_inlier_fraction=0.025,
     frontend_geo_radius_m=1.0, frontend_geo_min_overlap=0.55, frontend_geo_max_rmse_m=0.65,
     bev_local_feature_dir=None, hybrid_bev_min_inliers=28, hybrid_bev_min_ratio=0.07, hybrid_bev_max_candidates=2,
-    bst_xy_index=False, surfel6d_fast_tree=False,
+    bst_xy_index=False, surfel6d_fast_tree=False, surfel6d_nn_workers=1, surfel6d_leafsize=16,
 ):
     if frontend_strategy not in ('exhaustive','adaptive','adaptive_geo','bev_local','bev_hybrid'):
         raise ValueError('frontend_strategy must be exhaustive or adaptive')
@@ -357,7 +357,8 @@ def benchmark_localization(
                     if local_solver == 'surfel_6dof':
                         selected_ids=np.asarray(ids,dtype=np.int64)
                         lres=align_surfel_6dof(target,target_map.cov6[selected_ids],target_map.counts[selected_ids],body_global,T_front,
-                            prepared=prepared_map.select(selected_ids), fast_tree=surfel6d_fast_tree)
+                            prepared=prepared_map.select(selected_ids), fast_tree=surfel6d_fast_tree,
+                            config=Surfel6DConfig(nn_workers=surfel6d_nn_workers, tree_leafsize=surfel6d_leafsize))
                     elif local_solver == 'native_surfel':
                         selected_ids=np.asarray(ids,dtype=np.int64)
                         lres=align_native_surfels(target,target_map.cov6[selected_ids],target_map.counts[selected_ids],body_global,T_front,native_cfg,
@@ -434,7 +435,7 @@ def benchmark_localization(
             'min_yaw_deg':float(reference_min_yaw_deg),'max_time_s':float(reference_max_time_s),'descriptor_voxel_m':float(descriptor_voxel_m)},
         'global_registration':{'backend':'KISS-Matcher isolated worker','voxel_size_m':float(kiss_voxel_m),'candidate_refinement':'small_gicp GICP',
             'scan_gicp_downsample_m':float(scan_gicp_downsample_m),'scan_gicp_max_correspondence_m':float(scan_gicp_max_corr_m)},
-        'step97i':{'bst_xy_index':bool(bst_xy_index),'surfel6d_fast_tree':bool(surfel6d_fast_tree)},
+        'step97i':{'bst_xy_index':bool(bst_xy_index),'surfel6d_fast_tree':bool(surfel6d_fast_tree),'surfel6d_nn_workers':int(surfel6d_nn_workers),'surfel6d_leafsize':int(surfel6d_leafsize)},
         'local_refinement':{'backend':('native_surfel_xy_yaw' if local_solver=='native_surfel' else ('native_surfel_6dof' if local_solver=='surfel_6dof' else 'small_gicp GICP')),'map_gicp_downsample_m':float(map_gicp_downsample_m),
             'map_gicp_max_correspondence_m':float(map_gicp_max_corr_m),'local_map_radius_m':float(local_map_radius_m)},
         'success_thresholds':{'fine_xy_m':float(fine_success_translation_m),'fine_yaw_deg':float(fine_success_yaw_deg),
