@@ -58,6 +58,21 @@ def main():
     p.add_argument('--global-success-rotation-deg',type=float,default=5.0)
     p.add_argument('--no-voxel-baseline',action='store_true')
     p.add_argument('--quiet',action='store_true')
+    p.add_argument('--frontend-strategy',choices=('exhaustive','adaptive','adaptive_geo','bev_local','bev_hybrid'),default='exhaustive',help='Exhaustive frozen top-5 control, or geometrically verified early-exit cascade')
+    p.add_argument('--bev-local-feature-dir',default=None)
+    p.add_argument('--hybrid-bev-min-inliers',type=int,default=28)
+    p.add_argument('--hybrid-bev-min-ratio',type=float,default=0.07)
+    p.add_argument('--hybrid-bev-max-candidates',type=int,default=2)
+    p.add_argument('--frontend-geo-radius-m',type=float,default=1.0,help='Independent NN verification inlier distance threshold')
+    p.add_argument('--frontend-geo-min-overlap',type=float,default=0.55,help='Minimum independent nearest-neighbor overlap')
+    p.add_argument('--frontend-geo-max-rmse-m',type=float,default=0.65,help='Maximum 80%% trimmed NN RMSE among overlapping points')
+    p.add_argument('--frontend-min-inliers',type=int,default=350,help='Adaptive early exit: minimum converged scan-GICP inliers')
+    p.add_argument('--frontend-min-inlier-fraction',type=float,default=0.025,help='Adaptive early exit: scan-GICP inliers / query input points')
+    p.add_argument('--frontend-pose-cache',default=None,help='Replay identical frontend SE(3) poses, skipping KISS attempts; timing excludes frontend')
+    p.add_argument('--save-frontend-poses',action='store_true',help='Write frontend_poses.npz for paired solver comparison')
+    p.add_argument('--local-solver',choices=('gicp','native_surfel','surfel_6dof'),default='gicp')
+    p.add_argument('--native-yaw-multistart',action='store_true',help='Try fixed ±1.5 degree starts; native_surfel only')
+    p.add_argument('--orientation-diagnostics',action='store_true',help='Write Step 9.7A signed-yaw/geometry audit without altering localization')
     p.add_argument('--output',default='results/step9_6_bevplace_global_to_local')
     a=p.parse_args()
     if a.retriever == "bevplace" and not a.descriptor_cache_dir:
@@ -87,7 +102,8 @@ def main():
         fine_success_translation_m=a.fine_success_translation,fine_success_yaw_deg=a.fine_success_yaw_deg,
         strict_6d_translation_m=a.strict_6d_translation,strict_6d_rotation_deg=a.strict_6d_rotation_deg,
         global_success_translation_m=a.global_success_translation,global_success_rotation_deg=a.global_success_rotation_deg,
-        include_voxel_baseline=not a.no_voxel_baseline,progress=not a.quiet,descriptor_cache_dir=a.descriptor_cache_dir,retriever=a.retriever)
+        include_voxel_baseline=not a.no_voxel_baseline,progress=not a.quiet,descriptor_cache_dir=a.descriptor_cache_dir,retriever=a.retriever,
+        orientation_diagnostics=a.orientation_diagnostics,local_solver=a.local_solver,native_yaw_multistart=a.native_yaw_multistart,frontend_pose_cache=a.frontend_pose_cache,save_frontend_poses=a.save_frontend_poses,frontend_strategy=a.frontend_strategy,frontend_min_inliers=a.frontend_min_inliers,frontend_min_inlier_fraction=a.frontend_min_inlier_fraction,frontend_geo_radius_m=a.frontend_geo_radius_m,frontend_geo_min_overlap=a.frontend_geo_min_overlap,frontend_geo_max_rmse_m=a.frontend_geo_max_rmse_m,bev_local_feature_dir=a.bev_local_feature_dir,hybrid_bev_min_inliers=a.hybrid_bev_min_inliers,hybrid_bev_min_ratio=a.hybrid_bev_min_ratio,hybrid_bev_max_candidates=a.hybrid_bev_max_candidates)
 
     print('\nStep 9.6 BEVPlace++ global-to-local summary')
     for r in summary:
