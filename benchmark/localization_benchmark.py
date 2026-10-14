@@ -24,7 +24,7 @@ from localization.pyramid import voxel_downsample_first
 from localization.surfel_icp import SurfelLocalMapIndex
 from localization.surfels import align_voxel_surfels_to_prepared
 from localization.lod import build_native_surfel_hierarchy, build_hierarchical_lod_view
-from localization.compact_map import materialize_lod_view, MaterializedLODBSTIndex
+from localization.compact_map import materialize_lod_view, MaterializedLODBSTIndex, IndexedMaterializedLODBSTIndex
 from localization.history import causal_latest_prior_plan
 from localization.retrieval import HistoricalRetriever
 from benchmark.orientation_diagnostics import make_pose_audit
@@ -72,6 +72,7 @@ def benchmark_localization(
     frontend_strategy="exhaustive", frontend_min_inliers=350, frontend_min_inlier_fraction=0.025,
     frontend_geo_radius_m=1.0, frontend_geo_min_overlap=0.55, frontend_geo_max_rmse_m=0.65,
     bev_local_feature_dir=None, hybrid_bev_min_inliers=28, hybrid_bev_min_ratio=0.07, hybrid_bev_max_candidates=2,
+    bst_xy_index=False, surfel6d_fast_tree=False,
 ):
     if frontend_strategy not in ('exhaustive','adaptive','adaptive_geo','bev_local','bev_hybrid'):
         raise ValueError('frontend_strategy must be exhaustive or adaptive')
@@ -173,7 +174,7 @@ def benchmark_localization(
         voxel_index=SurfelLocalMapIndex(aligned,bucket_width_m)
         hierarchy=build_native_surfel_hierarchy(aligned,prepared,session_blocks,core,bst,prior_i,6,0.20,0.20,progress=progress)
         view=build_hierarchical_lod_view(hierarchy,FROZEN_PROFILE,FROZEN_K); compact=materialize_lod_view(view)
-        bst_index=MaterializedLODBSTIndex(compact,bst,prior_i)
+        bst_index=(IndexedMaterializedLODBSTIndex if bst_xy_index else MaterializedLODBSTIndex)(compact,bst,prior_i)
         # Precompute frozen covariance eigenvectors once per historical map, not per query.
         prepared_native = (
             ((PreparedSurfelMap.build(aligned.cov6, aligned.counts, native_cfg) if include_voxel_baseline else None),
@@ -189,7 +190,9 @@ def benchmark_localization(
             )
         map_stats.append({'historical_map_session':prior_session,'voxel_elements':len(aligned.centroids),
             'bst_k4_elements':len(compact.centroids),'voxel_geometry_mib':_runtime_voxel_geometry_bytes(aligned)/(1024**2),
-            'bst_k4_geometry_mib':compact.geometry_payload_nbytes()/(1024**2),'bst_k4_directory_mib':compact.directory_nbytes()/(1024**2)})
+            'bst_k4_geometry_mib':compact.geometry_payload_nbytes()/(1024**2),'bst_k4_directory_mib':compact.directory_nbytes()/(1024**2),
+            'bst_xy_index_extra_mib':getattr(bst_index,'extra_index_nbytes_estimate',0)/(1024**2),
+            'bst_xy_index_prepare_ms':getattr(bst_index,'prepare_ms',0.0)})
 
         for p in assoc:
             if progress: print(f'[9.5] global relocalization {prior_session}->{p.query_session} ({len(selected[p.query_session])} scans)...',flush=True)
@@ -354,7 +357,7 @@ def benchmark_localization(
                     if local_solver == 'surfel_6dof':
                         selected_ids=np.asarray(ids,dtype=np.int64)
                         lres=align_surfel_6dof(target,target_map.cov6[selected_ids],target_map.counts[selected_ids],body_global,T_front,
-                            prepared=prepared_map.select(selected_ids))
+                            prepared=prepared_map.select(selected_ids), fast_tree=surfel6d_fast_tree)
                     elif local_solver == 'native_surfel':
                         selected_ids=np.asarray(ids,dtype=np.int64)
                         lres=align_native_surfels(target,target_map.cov6[selected_ids],target_map.counts[selected_ids],body_global,T_front,native_cfg,
@@ -431,6 +434,7 @@ def benchmark_localization(
             'min_yaw_deg':float(reference_min_yaw_deg),'max_time_s':float(reference_max_time_s),'descriptor_voxel_m':float(descriptor_voxel_m)},
         'global_registration':{'backend':'KISS-Matcher isolated worker','voxel_size_m':float(kiss_voxel_m),'candidate_refinement':'small_gicp GICP',
             'scan_gicp_downsample_m':float(scan_gicp_downsample_m),'scan_gicp_max_correspondence_m':float(scan_gicp_max_corr_m)},
+        'step97i':{'bst_xy_index':bool(bst_xy_index),'surfel6d_fast_tree':bool(surfel6d_fast_tree)},
         'local_refinement':{'backend':('native_surfel_xy_yaw' if local_solver=='native_surfel' else ('native_surfel_6dof' if local_solver=='surfel_6dof' else 'small_gicp GICP')),'map_gicp_downsample_m':float(map_gicp_downsample_m),
             'map_gicp_max_correspondence_m':float(map_gicp_max_corr_m),'local_map_radius_m':float(local_map_radius_m)},
         'success_thresholds':{'fine_xy_m':float(fine_success_translation_m),'fine_yaw_deg':float(fine_success_yaw_deg),

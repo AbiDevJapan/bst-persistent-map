@@ -25,7 +25,7 @@ class Surfel6DConfig:
     profile: bool = False
 
 
-def align_surfel_6dof(centroids, cov6, counts, scan, initial, config=None, prepared=None):
+def align_surfel_6dof(centroids, cov6, counts, scan, initial, config=None, prepared=None, fast_tree=False):
     cfg=config or Surfel6DConfig()
     t0=time.perf_counter()
     phases={"normal_ms":0.0,"tree_ms":0.0,"correspondence_ms":0.0,"linearize_ms":0.0,"acceptance_ms":0.0}
@@ -54,7 +54,8 @@ def align_surfel_6dof(centroids, cov6, counts, scan, initial, config=None, prepa
     phases["normal_ms"]+=(time.perf_counter()-tick)*1000
     if not np.isfinite(dst).all() or not np.isfinite(n).all():
         raise ValueError('Nonfinite target geometry')
-    tick=time.perf_counter(); tree=cKDTree(dst)
+    tick=time.perf_counter(); tree=(cKDTree(dst, balanced_tree=False, compact_nodes=False)
+          if fast_tree else cKDTree(dst))
     phases["tree_ms"]+=(time.perf_counter()-tick)*1000
     T=T0.copy(); prev=float('inf'); accepted=False; count=0; steps=0
     for iteration in range(cfg.iterations):

@@ -272,3 +272,41 @@ __all__ = [
     'MaterializedLODMap', 'MaterializedLODBSTIndex', 'MaterializationVerification',
     'materialize_lod_view', 'verify_materialization',
 ]
+
+
+class IndexedMaterializedLODBSTIndex(MaterializedLODBSTIndex):
+    """Warm-map XY index, preserving original materialized row order and radius predicate.
+
+    Assumes the materialized map is immutable for its historical session. The
+    index covers ONLY this session's compact map; it cannot mix future geometry.
+    """
+    def __init__(self, lod_map, bst_map, session_index):
+        from scipy.spatial import cKDTree
+        import time
+        super().__init__(lod_map, bst_map, session_index)
+        start = time.perf_counter()
+        xy = np.asarray(lod_map.centroids[:, :2], dtype=np.float64)
+        if not np.isfinite(xy).all():
+            raise ValueError("Nonfinite map centroids")
+        self._xy_tree = cKDTree(xy)
+        self.prepare_ms = (time.perf_counter() - start) * 1000.0
+        self.extra_index_nbytes_estimate = int(xy.nbytes + self._xy_tree.size * 32)
+
+    def query_radius_ids(self, cx, cy, radius_m):
+        if not np.isfinite((cx, cy, radius_m)).all() or radius_m < 0:
+            raise ValueError("Invalid query circle")
+        # Slight expansion prevents floating-point boundary omissions, then
+        # apply exactly the original squared-distance filtering predicate.
+        rr = np.nextafter(float(radius_m), np.inf)
+        rows = np.asarray(self._xy_tree.query_ball_point((float(cx), float(cy)), rr), dtype=np.int64)
+        if len(rows):
+            p = self.map.centroids[rows]
+            keep = (p[:, 0] - cx)**2 + (p[:, 1] - cy)**2 <= radius_m**2
+            rows = np.sort(rows[keep], kind='stable')
+        self.last_stats = {'blocks_scanned': 0, 'bucket_refs': 0,
+                           'active_blocks': -1, 'returned': int(len(rows)),
+                           'index_type': 'warm_xy_kdtree'}
+        return rows
+
+    def nbytes(self):
+        return super().nbytes() + self.extra_index_nbytes_estimate

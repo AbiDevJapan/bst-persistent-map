@@ -73,6 +73,8 @@ def main():
     p.add_argument('--local-solver',choices=('gicp','native_surfel','surfel_6dof'),default='gicp')
     p.add_argument('--native-yaw-multistart',action='store_true',help='Try fixed ±1.5 degree starts; native_surfel only')
     p.add_argument('--orientation-diagnostics',action='store_true',help='Write Step 9.7A signed-yaw/geometry audit without altering localization')
+    p.add_argument('--bst-xy-index',action='store_true',help='Warm-map 2D KD-tree BST retrieval (Step 9.7I)')
+    p.add_argument('--surfel6d-fast-tree',action='store_true',help='Cheaper local tree construction; benchmark numerical equivalence')
     p.add_argument('--output',default='results/step9_6_bevplace_global_to_local')
     a=p.parse_args()
     if a.retriever == "bevplace" and not a.descriptor_cache_dir:
@@ -103,7 +105,7 @@ def main():
         strict_6d_translation_m=a.strict_6d_translation,strict_6d_rotation_deg=a.strict_6d_rotation_deg,
         global_success_translation_m=a.global_success_translation,global_success_rotation_deg=a.global_success_rotation_deg,
         include_voxel_baseline=not a.no_voxel_baseline,progress=not a.quiet,descriptor_cache_dir=a.descriptor_cache_dir,retriever=a.retriever,
-        orientation_diagnostics=a.orientation_diagnostics,local_solver=a.local_solver,native_yaw_multistart=a.native_yaw_multistart,frontend_pose_cache=a.frontend_pose_cache,save_frontend_poses=a.save_frontend_poses,frontend_strategy=a.frontend_strategy,frontend_min_inliers=a.frontend_min_inliers,frontend_min_inlier_fraction=a.frontend_min_inlier_fraction,frontend_geo_radius_m=a.frontend_geo_radius_m,frontend_geo_min_overlap=a.frontend_geo_min_overlap,frontend_geo_max_rmse_m=a.frontend_geo_max_rmse_m,bev_local_feature_dir=a.bev_local_feature_dir,hybrid_bev_min_inliers=a.hybrid_bev_min_inliers,hybrid_bev_min_ratio=a.hybrid_bev_min_ratio,hybrid_bev_max_candidates=a.hybrid_bev_max_candidates)
+        orientation_diagnostics=a.orientation_diagnostics,local_solver=a.local_solver,native_yaw_multistart=a.native_yaw_multistart,frontend_pose_cache=a.frontend_pose_cache,save_frontend_poses=a.save_frontend_poses,frontend_strategy=a.frontend_strategy,frontend_min_inliers=a.frontend_min_inliers,frontend_min_inlier_fraction=a.frontend_min_inlier_fraction,frontend_geo_radius_m=a.frontend_geo_radius_m,frontend_geo_min_overlap=a.frontend_geo_min_overlap,frontend_geo_max_rmse_m=a.frontend_geo_max_rmse_m,bev_local_feature_dir=a.bev_local_feature_dir,hybrid_bev_min_inliers=a.hybrid_bev_min_inliers,hybrid_bev_min_ratio=a.hybrid_bev_min_ratio,hybrid_bev_max_candidates=a.hybrid_bev_max_candidates,bst_xy_index=a.bst_xy_index,surfel6d_fast_tree=a.surfel6d_fast_tree)
 
     print('\nStep 9.6 BEVPlace++ global-to-local summary')
     for r in summary:
