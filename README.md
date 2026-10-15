@@ -1,10 +1,7 @@
-# BST lifelong mapping research prototype — through Step 9.4
+# Lifelong NCLT Map Versioning and Selective Synchronization (Step 10)
 
-This package contains the cumulative implementation through **Step 9.4: causal historical map selection**.
+**Primary workflow:** `README_STEP10.md`; `run_versioned_map.py`, `versioned_map/`.
 
-Run `README_STEP9_4.md` for the new experiment. Earlier step contracts and runners are retained for reproducibility.
+**Optional legacy localization:** `run_localization.py`, `localization/`, `benchmark/`. See `README_STEP9_7J.md`.
 
-Important: `PrototypeBSTSpatialCodec` remains a local research codec. It is not claimed to be a verified upstream BST-ID implementation.
-
-## Step 9.5
-See `README_STEP9_5.md` for the global-to-local Scan Context → KISS-Matcher → small_gicp → BST K=4 relocalization benchmark.
+**BST-ID codec selection:** `--codec official | prototype | morton`. Official author implementation is vendored under `third_party/bstid_author/bst_id`; legacy 3D prototype remains available unchanged. Both are separated from exact metric voxel contents.
