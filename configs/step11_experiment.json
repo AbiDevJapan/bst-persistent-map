@@ -1,0 +1,11 @@
+{
+  "project": "Correction-aware lifelong mapping; identifier-neutral reference engine",
+  "data": "synthetic_smoke_test_until_real_local_scans_available",
+  "source_coordinate_frame": "local metric XYZ; caller supplies SE3 to global metric frame",
+  "grid": {"voxel_size_m": 0.5, "tile_side_voxels": 32, "origin_m": [0, 0, 0]},
+  "temporal": {"source_time": "UTC Unix seconds", "revision_time": "ordered commit revision"},
+  "measure": ["corrected_full_rebuild_exactness", "affected_tiles", "correction_commit_ms", "revision_query_p50_p95", "total_database_bytes", "localization_noninferiority_future"],
+  "baselines": ["all_sources_full_rebuild", "sqlite_spatial_hash_bitmap_pages", "hierarchical_morton_future", "dynamic_bst_id_future"],
+  "experimental_control": "identical source observations, pose corrections, voxel grids, and semantic output across all indexing backends",
+  "claim_status": "reference correctness complete on synthetic; NCLT and localization experiments pending"
+}

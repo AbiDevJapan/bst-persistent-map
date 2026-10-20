@@ -1,0 +1,4 @@
+# Minimal runtime/development dependencies for correction-aware reference engine
+numpy>=1.24
+pytest>=7
+# SQLite supplied by the Python standard library
