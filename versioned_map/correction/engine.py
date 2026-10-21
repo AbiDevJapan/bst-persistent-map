@@ -22,6 +22,8 @@ from typing import Iterable, Mapping
 
 import numpy as np
 
+from .count_deltas import apply_deltas, pack_counts, signed_deltas, unpack_counts
+
 from .voxel import (
     GRID_SIDE, Pose, canonical_blob, count_pack, count_unpack, decode_indices,
     encode_indices, filter_roi, full_mask, grid_roi_bounds, indices_to_grid,
@@ -131,36 +133,42 @@ class CorrectionMap:
         row=self.con.execute('SELECT page_hash FROM tile_versions WHERE tx=? AND ty=? AND tz=? AND to_revision IS NULL',tile).fetchone()
         return row[0] if row else None
 
-    def _commit_changed_tiles(self, updates: dict[tuple[int,int,int],tuple[list[set[int]],list[set[int]]]], r: int) -> tuple[int,int]:
+    def _commit_changed_tiles(self, updates: dict[tuple[int,int,int],tuple[list[np.ndarray],list[np.ndarray]]], r: int) -> tuple[int,int]:
+        """Apply the net signed contribution changes once per affected tile.
+
+        Persistent counts must be updated even when the OCCUPIED UNION does not
+        change (multiple robots observing one cell). Only a changed union creates
+        a new immutable page and closes a historical tile-version interval.
+        """
         touched=modified=0
         for tile,(remove,add) in sorted(updates.items()):
+            ids, delta = signed_deltas(remove, add)
+            if ids.size == 0:
+                continue  # exact net cancellation: neither counts nor history change
             touched += 1
-            counts=self._current_counts(tile)
-            prior=frozenset(counts)
-            for contribution in remove:
-                for ix in contribution:
-                    if ix not in counts: raise RuntimeError(f'missing contribution in {tile}, index {ix}')
-                    counts[ix]-=1
-                    if counts[ix] == 0: del counts[ix]
-            for contribution in add:
-                for ix in contribution:
-                    counts[ix]=counts.get(ix,0)+1
-            if counts:
+            old_row=self.con.execute('SELECT counters FROM tile_counts WHERE tx=? AND ty=? AND tz=?', tile).fetchone()
+            previous=unpack_counts(old_row[0] if old_row else None)
+            current=apply_deltas(previous,ids,delta)
+            if np.array_equal(previous,current):
+                continue
+            if current.size:
                 self.con.execute('INSERT OR REPLACE INTO tile_counts VALUES(?,?,?,?)',
-                                 (*tile,count_pack(counts)))
+                                 (*tile,pack_counts(current)))
             else:
                 self.con.execute('DELETE FROM tile_counts WHERE tx=? AND ty=? AND tz=?',tile)
-            next_occupied=frozenset(counts)
-            if prior == next_occupied: continue  # correction did not change union occupancy
+            # Even if counter MULTIPLICITIES change, an identical occupied union
+            # must retain the previous immutable geometry page and its interval.
+            if np.array_equal(previous['index'], current['index']):
+                continue
             modified += 1
             page_hash=None
-            if next_occupied:
-                encoding,payload,canonical_hash,n=encode_indices(np.fromiter(next_occupied,dtype=np.uint16))
+            if current.size:
+                encoding,payload,canonical_hash,n=encode_indices(current['index'])
                 page_hash=canonical_hash.hex()
                 self.con.execute('INSERT OR IGNORE INTO pages VALUES(?,?,?,?,?)',
                                  (page_hash,encoding,payload,n,32768))
             self.con.execute('UPDATE tile_versions SET to_revision=? '
-                             'WHERE tx=? AND ty=? AND tz=? AND to_revision IS NULL', (r,*tile))
+                             'WHERE tx=? AND ty=? AND tz=? AND to_revision IS NULL',(r,*tile))
             self.con.execute('INSERT INTO tile_versions VALUES(?,?,?,?,?,?)',(*tile,r,None,page_hash))
         return touched,modified
 
@@ -212,34 +220,54 @@ class CorrectionMap:
             rows=self.con.execute('SELECT tx,ty,tz,indices FROM source_tiles WHERE source_id=?',(sid,)).fetchall()
             for tx,ty,tz,blob in rows:
                 tile=(int(tx),int(ty),int(tz))
-                updates.setdefault(tile,([],[]))[1].append(set(map(int,np.frombuffer(blob,dtype='<u2'))))
+                updates.setdefault(tile,([],[]))[1].append(np.frombuffer(blob,dtype='<u2'))
         # convert to list of additions; _commit_changed_tiles handles multiplicity
         return updates
 
     def correct_poses(self, changes: Mapping[str,Pose|np.ndarray], note: str='') -> UpdateResult:
+        """Commit corrected poses and only the per-source tile rows that changed.
+
+        The correction event is always recorded in pose_versions, including if
+        the spatial voxelization is identical (sub-voxel pose displacement).
+        This ensures bitemporal queries still use the actual corrected pose.
+        """
         if not changes: raise ValueError('empty corrections')
         t0=time.perf_counter()
         with self.con:
             self.con.execute('BEGIN IMMEDIATE')
             r=self.revision+1
-            updates: dict[tuple[int,int,int],tuple[list[set[int]],list[set[int]]]]={}
-            for sid,new_pose in sorted(changes.items()):
-                new_pose=new_pose if isinstance(new_pose,Pose) else Pose(new_pose)
+            updates: dict[tuple[int,int,int],tuple[list[np.ndarray],list[np.ndarray]]]={}
+            for sid,raw_pose in sorted(changes.items()):
+                new_pose=raw_pose if isinstance(raw_pose,Pose) else Pose(raw_pose)
                 row=self.con.execute('SELECT local_blob FROM sources WHERE source_id=?',(sid,)).fetchone()
                 if row is None: raise KeyError(f'unknown source: {sid}')
-                pts=load_blob(row[0])
-                old_rows=self.con.execute('SELECT tx,ty,tz,indices FROM source_tiles WHERE source_id=?',(sid,)).fetchall()
-                old={(int(x),int(y),int(z)):set(map(int,np.frombuffer(v,dtype='<u2'))) for x,y,z,v in old_rows}
-                new=tile_keyed_indices(pts,new_pose,self.voxel_size,self.origin)
-                for tile in old.keys() | new.keys():
-                    pair=updates.setdefault(tile,([],[]))
-                    if tile in old: pair[0].append(old[tile])
-                    if tile in new: pair[1].append(set(map(int,new[tile])))
-                self.con.execute('INSERT INTO pose_versions VALUES(?,?,?)',
-                                 (sid,r,new_pose.matrix.astype('<f8').tobytes()))
-                self.con.execute('DELETE FROM source_tiles WHERE source_id=?',(sid,))
-                for tile,ii in new.items():
-                    self.con.execute('INSERT INTO source_tiles VALUES(?,?,?,?,?)',(sid,*tile,ii.tobytes()))
+                # Exact identical pose: preserve the new revision event, but
+                # skip source decompression, reprojection and tile-table writes.
+                pose_row=self.con.execute('SELECT matrix FROM pose_versions WHERE source_id=? '
+                                          'ORDER BY revision DESC LIMIT 1',(sid,)).fetchone()
+                pose_bytes=new_pose.matrix.astype('<f8').tobytes()
+                if pose_row is None:
+                    raise RuntimeError(f'missing current source pose: {sid}')
+                if pose_row[0] != pose_bytes:
+                    pts=load_blob(row[0])
+                    old_rows=self.con.execute('SELECT tx,ty,tz,indices FROM source_tiles WHERE source_id=?',(sid,)).fetchall()
+                    old={(int(x),int(y),int(z)):np.frombuffer(v,dtype='<u2') for x,y,z,v in old_rows}
+                    new=tile_keyed_indices(pts,new_pose,self.voxel_size,self.origin)
+                    for tile in sorted(old.keys() | new.keys()):
+                        before=old.get(tile)
+                        after=new.get(tile)
+                        if before is not None and after is not None and np.array_equal(before,after):
+                            continue  # no voxel membership change for this source
+                        pair=updates.setdefault(tile,([],[]))
+                        if before is not None: pair[0].append(before)
+                        if after is not None: pair[1].append(after)
+                        if after is None:
+                            self.con.execute('DELETE FROM source_tiles WHERE source_id=? AND tx=? AND ty=? AND tz=?',
+                                             (sid,*tile))
+                        else:
+                            self.con.execute('INSERT OR REPLACE INTO source_tiles VALUES(?,?,?,?,?)',
+                                             (sid,*tile,after.tobytes()))
+                self.con.execute('INSERT INTO pose_versions VALUES(?,?,?)',(sid,r,pose_bytes))
             result=self._new_revision('pose_correction',len(changes),updates,note,t0)
         return replace(result,local_update_ms=(time.perf_counter()-t0)*1000.)
 

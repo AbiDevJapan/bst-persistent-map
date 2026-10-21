@@ -151,50 +151,19 @@ def read_velodyne_sync_bin(path: str | Path) -> np.ndarray:
     return xyz[valid]
 
 
-def load_ground_truth(path: str | Path, *, return_stats: bool = False):
-    """Read NCLT ground-truth poses, rejecting missing/nonfinite pose samples.
-
-    NCLT rows: timestamp_us, x, y, z, roll, pitch, yaw.  Some recordings
-    contain NaN/Inf pose estimates during tracking outages.  Such records are
-    *not* valid SE(3) poses and must never reach the timestamp matcher.
-
-    Valid rows retain the original timestamps and pose values; there is no
-    interpolation and no artificial filling of ground-truth gaps.  Callers
-    must still enforce their maximum acceptable scan-to-pose time gap.
-
-    By default returns a sorted Nx7 float64 array for backward compatibility.
-    With return_stats=True returns (rows, diagnostic_counts).
+def load_ground_truth(path: str | Path) -> np.ndarray:
     """
-    path = Path(path)
-    gt = np.loadtxt(path, delimiter=",", dtype=np.float64, ndmin=2)
+    Returns Nx7 float64:
+      utime_us, x, y, z, roll, pitch, yaw
+    """
+    gt = np.loadtxt(path, delimiter=",", dtype=np.float64)
+    if gt.ndim == 1:
+        gt = gt.reshape(1,-1)
     if gt.shape[1] < 7:
         raise ValueError(f"Expected >=7 columns in {path}, got {gt.shape[1]}")
     gt = gt[:, :7]
-    if not len(gt):
-        raise ValueError(f"Ground-truth CSV is empty: {path}")
-
-    valid_time = np.isfinite(gt[:, 0])
-    valid_pose = np.all(np.isfinite(gt[:, 1:7]), axis=1)
-    keep = valid_time & valid_pose
-    stats = {
-        "file": str(path),
-        "rows_total": int(len(gt)),
-        "rows_valid": int(np.count_nonzero(keep)),
-        "rows_discarded": int(np.count_nonzero(~keep)),
-        "rows_nonfinite_timestamp": int(np.count_nonzero(~valid_time)),
-        "rows_nonfinite_pose": int(np.count_nonzero(~valid_pose)),
-    }
-    if not np.any(keep):
-        raise ValueError(
-            f"No finite timestamp + XYZ/RPY ground-truth rows in {path} "
-            f"({stats['rows_total']} total; {stats['rows_nonfinite_timestamp']} "
-            f"bad timestamps, {stats['rows_nonfinite_pose']} bad poses). "
-            "Check the CSV source rather than inventing replacement poses."
-        )
-
-    result = gt[keep]
-    result = result[np.argsort(result[:, 0], kind="stable")]
-    return (result, stats) if return_stats else result
+    order = np.argsort(gt[:,0])
+    return gt[order]
 
 
 def _rot_zyx(roll: np.ndarray, pitch: np.ndarray, yaw: np.ndarray) -> np.ndarray:

@@ -88,10 +88,11 @@ def encode_indices(indices: np.ndarray) -> tuple[str, bytes, bytes, int]:
     ii = np.unique(np.asarray(indices, dtype=_DTYPE_U16))
     if ii.size and int(ii.max()) >= N_BITS:
         raise ValueError('tile index out of range')
-    dense = np.zeros(N_BYTES, dtype=np.uint8)
-    if ii.size:
-        np.bitwise_or.at(dense, ii.astype(np.int32)//8, (1 << (ii.astype(np.int32)%8)).astype(np.uint8))
-    canonical = dense.tobytes()
+    # Packing a boolean lattice is faster than scatter OR into the same bytes.
+    # It is still LSB-first and retains the Step 11.0 canonical SHA-256 format.
+    active = np.zeros(N_BITS, dtype=np.uint8)
+    active[ii] = 1
+    canonical = np.packbits(active, bitorder='little').tobytes()
     digest = hashlib.sha256(canonical).digest()
     d = zlib.compress(canonical, level=6)
     sparse = zlib.compress(ii.tobytes(), level=6)
@@ -123,9 +124,9 @@ def full_mask(encoding: str, data: bytes) -> np.ndarray:
             raise ValueError('corrupt bitplane length')
         return arr.copy()
     ii = decode_indices(encoding, data)
-    result = np.zeros(N_BYTES, dtype=np.uint8)
-    np.bitwise_or.at(result, ii.astype(np.int32)//8, (1 << (ii.astype(np.int32)%8)).astype(np.uint8))
-    return result
+    active = np.zeros(N_BITS, dtype=np.uint8)
+    active[ii] = 1
+    return np.packbits(active, bitorder='little')
 
 
 def indices_to_grid(indices: np.ndarray, tile: tuple[int,int,int]) -> np.ndarray:

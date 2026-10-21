@@ -97,23 +97,17 @@ def prepare_nclt(data_root: str|Path, sessions: list[str], output: str|Path, con
     output=Path(output).resolve()
     if output.exists() and any(output.iterdir()) and not overwrite:
         raise FileExistsError(f'{output} exists and is nonempty; choose a new output or --overwrite')
-    # Preflight every GT file before creating output files. A single nonfinite
-    # GT sample must not invalidate an otherwise usable trajectory; the shared
-    # loader discards bad rows but NEVER interpolates over missing intervals.
-    paths = [discover_nclt_session(data_root, s) for s in sessions]
-    prepared_ground_truth = []
-    for source_paths in paths:
-        gt, gt_stats = load_ground_truth(source_paths.gt_csv, return_stats=True)
-        prepared_ground_truth.append((source_paths, gt, gt_stats))
-
+    # Preflight all required source files before writing any output.
+    paths=[discover_nclt_session(data_root,s) for s in sessions]
     output.mkdir(parents=True,exist_ok=True)
     scans_dir=output/'scans';scans_dir.mkdir(exist_ok=True)
     delta=_delta_matrix(config.corrupt_translation_m,config.corrupt_yaw_deg)
     rows=[];truth_rows=[];corrections={};quality=[];count=0
     skipped_gap=skipped_empty=0
-    gt_quality=[]
-    for paths_for_session, gt, gt_stats in prepared_ground_truth:
-        gt_quality.append(dict(session=paths_for_session.session_name, **gt_stats))
+    for paths_for_session in paths:
+        gt=load_ground_truth(paths_for_session.gt_csv)
+        if len(gt)==0 or not np.isfinite(gt).all():
+            raise ValueError(f'nonfinite/empty ground truth: {paths_for_session.gt_csv}')
         matcher=_NearestPoseMatcher(gt)
         scans=_list_scan_files(paths_for_session.scan_dir)[::config.scan_stride]
         scans=scans[:config.max_scans_per_session]
@@ -158,16 +152,7 @@ def prepare_nclt(data_root: str|Path, sessions: list[str], output: str|Path, con
                                 perturbed=int(corrupted)))
             if corrupted: corrections[sid]=gt_mat.tolist()
             selected+=1;count+=1
-    if not rows:
-        raise RuntimeError(
-            'No scans prepared. '
-            f'Skipped {skipped_gap} selected scans for ground-truth gaps above '
-            f'{config.max_pose_gap_us} us and {skipped_empty} empty scans. '
-            'Finite ground-truth rows by session: ' +
-            '; '.join(f"{info['session']}={info['rows_valid']}/{info['rows_total']}" for info in gt_quality) +
-            '. Check scan filename timestamps against GT microseconds. '
-            'Do not relax --max-pose-gap-us without evaluating trajectory gaps.'
-        )
+    if not rows:raise RuntimeError('no scans prepared; check session layout/pose gap/ranges')
     if not corrections:raise RuntimeError('no scans in corruption segment; adjust --corrupt-from/--corrupt-count')
     _write_json(output/'manifest_initial.json',rows)
     _write_json(output/'manifest_corrected.json',truth_rows)
@@ -177,7 +162,6 @@ def prepare_nclt(data_root: str|Path, sessions: list[str], output: str|Path, con
     meta={'step':'11.1','data_root':str(Path(data_root).resolve()),'sessions':sessions,
           'config':asdict(config),'sources':len(rows),'correction_sources':len(corrections),
           'skipped_pose_gap':skipped_gap,'skipped_empty':skipped_empty,
-          'groundtruth_quality':gt_quality,
           'measured_pose_gap_us_p50':float(np.median([r['gap_us'] for r in quality])),
           'measured_pose_gap_us_p95':float(np.percentile([r['gap_us'] for r in quality],95)),
           'timestamps':'scan filenames are microseconds; correction engine observed_at is UTC seconds; full microseconds retained in provenance',

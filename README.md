@@ -1,17 +1,19 @@
+## Step 11.3 — Batched correction deltas (current)
+
+Start at [README_STEP11_3.md](README_STEP11_3.md) for the lossless, schema-compatible correction update optimization, focused tests, and minimal real-NCLT smoke check.
+
+## Step 11.2 — Light scalability diagnostic
+
+See [README_STEP11_2_LIGHT.md](README_STEP11_2_LIGHT.md) for the earlier 64/128/256 NCLT locality smoke experiment.
+
 ## Step 11.1 — Real NCLT correction baseline
 
-See [README_STEP11_1.md](README_STEP11_1.md) for timestamped NCLT source ingestion, provenance and exact pose-correction experiments. The existing Step 11 and Step 10 workflows remain available.
+See [README_STEP11_1.md](README_STEP11_1.md) for timestamped NCLT source ingestion, provenance, and exact pose-correction experiments. All earlier Step 10 and Step 9 modules remain available.
 
 # Lifelong 3D Mapping — Correction-Aware Research Branch
 
-**New research starting point: [README_STEP11.md](README_STEP11.md)**
+**Architecture overview: [README_STEP11.md](README_STEP11.md)**
 
-The new primary CLI is `run_correction_map.py`. It adds immutable local-source measurements, robot and source provenance, pose revision history, correction-aware incremental updates, direct historical map revisions, and compressed bitmap/sparse occupancy pages. The mapping/storage index is deliberately codec-neutral so BST-ID can be compared fairly with Morton and spatial hashing.
+Primary CLI: `run_correction_map.py`; real NCLT: `run_nclt_correction.py`; scaling: `run_correction_scaling.py`; current tiny smoke test: `run_step113_smoke.py`. Source local measurements are immutable and source poses are revisioned. The codec-neutral map core uses exact source contribution counts and immutable compressed occupancy pages; BST-ID is retained as an *independent comparison baseline*, not coupled to the correction algorithm.
 
-**Preserved, runnable baselines:**
-
-- Step 10.0–10.5B historical snapshots, deltas, interval 4D, and adaptive geometry: `run_versioned_map.py` and `README_STEP10.md` through `README_STEP10_5B.md`.
-- Step 9 localization: `run_localization.py`, `localization/`, and `README_STEP9_7J.md`.
-- Original author-supplied BST-ID Python code under `third_party/bstid_author/`, unmodified.
-
-The new correction core is a correctness-first baseline, **not yet a dynamic BST-ID correction algorithm or a proven NCLT speedup**.
+Existing Steps 9.x and 10.x preserved for reproducibility. No claim is made of end-to-end SLAM, localization quality, or state-of-the-art indexing superiority.
